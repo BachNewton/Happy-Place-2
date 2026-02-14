@@ -51,6 +51,37 @@ assets/maps/town.json       # Starter map (60x30)
 
 Maps are JSON files in `assets/maps/`. See `town.json` for the format. The legend maps tile indices to characters, colors, walkability, and names.
 
+## Production Deployment
+
+The game server runs on an Oracle Cloud always-free VM (VM.Standard.E2.1.Micro, 1 OCPU, 1GB RAM, Ubuntu 24.04).
+
+**Connect to the game:**
+```bash
+ssh -p 2222 YourName@207.127.95.242
+```
+
+**SSH into the VM:**
+```bash
+ssh -i ~/.ssh/oci_happy_place ubuntu@207.127.95.242
+```
+
+**Auto-deploy:** Every push to `main` triggers `.github/workflows/deploy.yml`, which SSHes into the VM, pulls the latest code, rebuilds, and restarts the service.
+
+**Service management (on the VM):**
+```bash
+sudo systemctl status happy-place    # Check status
+sudo systemctl restart happy-place   # Restart
+sudo journalctl -u happy-place -f    # View logs
+```
+
+**Infrastructure details:**
+- **Region:** eu-stockholm-1
+- **OCI CLI config:** `~/.oci/config`
+- **VM SSH key:** `~/.ssh/oci_happy_place`
+- **GitHub secrets:** `OCI_SSH_KEY`, `OCI_HOST`
+- **Systemd unit:** `/etc/systemd/system/happy-place.service`
+- **App path on VM:** `/home/ubuntu/Happy-Place-2`
+
 ## Development Notes
 
 - Host key is auto-generated as `host_key` in the working directory on first run
