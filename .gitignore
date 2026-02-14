@@ -1,0 +1,12 @@
+# Build artifacts
+*.exe
+server
+
+# Generated files
+host_key
+nul
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
