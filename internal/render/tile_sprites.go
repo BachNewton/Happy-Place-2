@@ -2,30 +2,35 @@ package render
 
 import "happy-place-2/internal/maps"
 
+// tileFunc generates a sprite for a tile at world position (wx,wy) at the given tick.
+type tileFunc func(wx, wy int, tick uint64) Sprite
+
+// tileNames is the ordered list of all known tile types (used by debug view).
+var tileNames = []string{"grass", "wall", "water", "tree", "path", "door", "floor", "fence"}
+
+// tileFuncs maps tile names to their sprite generators.
+var tileFuncs = map[string]tileFunc{
+	"grass": func(wx, wy int, tick uint64) Sprite { return grassSprite(uint(wx*7+wy*13)%4, tick) },
+	"wall":  func(wx, wy int, _ uint64) Sprite { return wallSprite(wx, wy) },
+	"water": func(wx, wy int, tick uint64) Sprite { return waterSprite(wx, wy, tick) },
+	"tree":  func(wx, wy int, _ uint64) Sprite { return treeSprite(uint(wx*7+wy*13) % 4) },
+	"path":  func(wx, wy int, _ uint64) Sprite { return pathSprite(uint(wx*7+wy*13) % 4) },
+	"door":  func(_, _ int, _ uint64) Sprite { return doorSprite() },
+	"floor": func(wx, wy int, _ uint64) Sprite { return floorSprite(uint(wx*7+wy*13) % 4) },
+	"fence": func(wx, wy int, _ uint64) Sprite { return fenceSprite(uint(wx*7+wy*13) % 4) },
+}
+
+// TileNames returns the ordered list of all known tile type names.
+func TileNames() []string {
+	return tileNames
+}
+
 // TileSprite returns the sprite for a tile at world position (wx,wy) at the given tick.
 func TileSprite(tile maps.TileDef, wx, wy int, tick uint64) Sprite {
-	v := uint(wx*7+wy*13) % 4
-
-	switch tile.Name {
-	case "grass":
-		return grassSprite(v, tick)
-	case "wall":
-		return wallSprite(wx, wy)
-	case "water":
-		return waterSprite(wx, wy, tick)
-	case "tree":
-		return treeSprite(v)
-	case "path":
-		return pathSprite(v)
-	case "door":
-		return doorSprite()
-	case "floor":
-		return floorSprite(v)
-	case "fence":
-		return fenceSprite(v)
-	default:
-		return fallbackSprite(tile)
+	if fn, ok := tileFuncs[tile.Name]; ok {
+		return fn(wx, wy, tick)
 	}
+	return fallbackSprite(tile)
 }
 
 // --- Grass ---

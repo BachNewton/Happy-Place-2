@@ -28,6 +28,7 @@ type PlayerInfo struct {
 	Dir       int // 0=down, 1=up, 2=left, 3=right
 	Anim      int // 0=idle, 1=walking
 	AnimFrame int // current animation frame
+	DebugView bool
 }
 
 // Engine is a per-session double-buffer diff renderer.
@@ -36,6 +37,7 @@ type Engine struct {
 	current       [][]Cell
 	next          [][]Cell
 	firstFrame    bool
+	lastDebugView bool
 }
 
 // NewEngine creates a renderer for the given terminal dimensions.
@@ -86,14 +88,25 @@ func (e *Engine) Render(
 	var viewerX, viewerY int
 	var viewerName string
 	var viewerColor int
+	var viewerDebug bool
 	for _, p := range players {
 		if p.ID == viewerID {
 			viewerX = p.X
 			viewerY = p.Y
 			viewerName = p.Name
 			viewerColor = p.Color
+			viewerDebug = p.DebugView
 			break
 		}
+	}
+
+	if viewerDebug != e.lastDebugView {
+		e.firstFrame = true
+		e.lastDebugView = viewerDebug
+	}
+
+	if viewerDebug {
+		return e.renderDebugView(viewerColor, tick)
 	}
 
 	vp := NewViewport(viewerX, viewerY, termW, termH, tileMap.Width, tileMap.Height, HUDRows)
@@ -281,6 +294,102 @@ func (e *Engine) writeHUDTextLine(row int, text string, fgR, fgG, fgB, bgR, bgG,
 			e.next[row][x] = Cell{Ch: ' ', BgR: bgR, BgG: bgG, BgB: bgB}
 		}
 	}
+}
+
+// renderDebugView draws a grid of all tile sprites and player direction sprites.
+func (e *Engine) renderDebugView(viewerColor int, tick uint64) string {
+	// Clear buffer with dark background
+	bgCell := Cell{Ch: ' ', BgR: 18, BgG: 18, BgB: 24}
+	for y := 0; y < e.height; y++ {
+		for x := 0; x < e.width; x++ {
+			e.next[y][x] = bgCell
+		}
+	}
+
+	// Title row
+	title := "SPRITE DEBUG (~ to close)"
+	titleRunes := []rune(title)
+	for i, r := range titleRunes {
+		if i < e.width {
+			e.next[0][i+1] = Cell{Ch: r, FgR: 255, FgG: 220, FgB: 100, BgR: 18, BgG: 18, BgB: 24, Bold: true}
+		}
+	}
+
+	// Layout constants
+	gap := 1
+	spriteStride := TileWidth + gap
+	maxCols := (e.width - 1) / spriteStride
+	if maxCols < 1 {
+		maxCols = 1
+	}
+
+	// Helper to write a label at screen position
+	writeLabel := func(row, col int, label string) {
+		for i, r := range []rune(label) {
+			x := col + i
+			if x >= 0 && x < e.width && row >= 0 && row < e.height {
+				e.next[row][x] = Cell{Ch: r, FgR: 160, FgG: 160, FgB: 175, BgR: 18, BgG: 18, BgB: 24}
+			}
+		}
+	}
+
+	// --- Tile sprites ---
+	tileNames := TileNames()
+	startY := 2
+	for i, name := range tileNames {
+		col := i % maxCols
+		row := i / maxCols
+		sx := col * spriteStride
+		sy := startY + row*(TileHeight+2) // +2 for label + gap
+
+		writeLabel(sy, sx, name)
+		sprite := tileFuncs[name](0, 0, tick)
+		e.stampSprite(sx, sy+1, sprite, false)
+	}
+
+	// --- Player sprites ---
+	tileRows := (len(tileNames) + maxCols - 1) / maxCols
+	playerStartY := startY + tileRows*(TileHeight+2) + 1
+
+	dirNames := []string{"down", "up", "left", "right"}
+	for i, dName := range dirNames {
+		col := i % maxCols
+		row := i / maxCols
+		sx := col * spriteStride
+		sy := playerStartY + row*(TileHeight+2)
+
+		writeLabel(sy, sx, dName)
+		sprite := PlayerSprite(i, 0, 0, viewerColor, true, "Debug")
+		e.stampSprite(sx, sy+1, sprite, true)
+	}
+
+	// Diff and emit
+	var sb strings.Builder
+	sb.Grow(16384)
+
+	lastRow, lastCol := -1, -1
+	for y := 0; y < e.height; y++ {
+		for x := 0; x < e.width; x++ {
+			nc := e.next[y][x]
+			if e.firstFrame || nc != e.current[y][x] {
+				if y != lastRow || x != lastCol {
+					sb.WriteString(MoveTo(y+1, x+1))
+				}
+				WriteCellSGR(&sb, nc)
+				lastRow = y
+				lastCol = x + 1
+			}
+		}
+	}
+
+	if sb.Len() > 0 {
+		sb.WriteString(Reset)
+	}
+
+	e.current, e.next = e.next, e.current
+	e.firstFrame = false
+
+	return sb.String()
 }
 
 func max(a, b int) int {

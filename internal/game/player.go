@@ -10,6 +10,7 @@ const (
 	ActionLeft
 	ActionRight
 	ActionQuit
+	ActionDebug
 )
 
 // Direction the player is facing.
@@ -49,6 +50,7 @@ type Player struct {
 	AnimTimer    int // ticks remaining in walk state
 	AnimTick     int // ticks since last frame advance
 	MoveCooldown int // ticks until next move allowed
+	DebugView    bool
 }
 
 // PlayerSnapshot is a read-only copy of player state for rendering.
@@ -60,6 +62,7 @@ type PlayerSnapshot struct {
 	Dir       Direction
 	Anim      AnimState
 	AnimFrame int
+	DebugView bool
 }
 
 // Snapshot returns a read-only copy of the player.
@@ -73,6 +76,7 @@ func (p *Player) Snapshot() PlayerSnapshot {
 		Dir:       p.Dir,
 		Anim:      p.Anim,
 		AnimFrame: p.AnimFrame,
+		DebugView: p.DebugView,
 	}
 }
 

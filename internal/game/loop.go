@@ -216,6 +216,12 @@ func (gl *GameLoop) processInput(ev InputEvent) {
 		return
 	}
 
+	// Toggle debug view
+	if ev.Action == ActionDebug {
+		player.DebugView = !player.DebugView
+		return
+	}
+
 	// Check move cooldown
 	if player.MoveCooldown > 0 {
 		return

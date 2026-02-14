@@ -148,6 +148,7 @@ func (s *SSHServer) handleSession(sess ssh.Session) {
 					Dir:       int(p.Dir),
 					Anim:      int(p.Anim),
 					AnimFrame: p.AnimFrame,
+					DebugView: p.DebugView,
 				}
 			}
 
@@ -194,6 +195,8 @@ func parseInput(data []byte) []game.Action {
 			actions = append(actions, game.ActionRight)
 		case 'q', 'Q':
 			actions = append(actions, game.ActionQuit)
+		case '`', '~':
+			actions = append(actions, game.ActionDebug)
 		case 3: // Ctrl-C
 			actions = append(actions, game.ActionQuit)
 		}
