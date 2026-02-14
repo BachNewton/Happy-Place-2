@@ -1,6 +1,6 @@
 # Build artifacts
 *.exe
-server
+/server
 
 # Generated files
 host_key

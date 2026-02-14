@@ -1,7 +1,5 @@
 package game
 
-import "happy-place-2/internal/render"
-
 // Action represents a player input action.
 type Action int
 
@@ -25,7 +23,7 @@ type Player struct {
 	ID    string
 	Name  string
 	X, Y  int
-	Color int
+	Color int // index into the render color palette
 }
 
 // PlayerSnapshot is a read-only copy of player state for rendering.
@@ -47,23 +45,13 @@ func (p *Player) Snapshot() PlayerSnapshot {
 	}
 }
 
-// DisplayChar returns the character to display for this player.
-// Self sees '@', others see the first letter of their name.
-func (ps PlayerSnapshot) DisplayChar(viewerID string) rune {
-	if ps.ID == viewerID {
-		return '@'
-	}
-	if len(ps.Name) > 0 {
-		return rune(ps.Name[0])
-	}
-	return '?'
-}
+const numPlayerColors = 6
 
 var colorIndex int
 
-// NextPlayerColor returns the next color from the rotating palette.
+// NextPlayerColor returns the next color index from the rotating palette.
 func NextPlayerColor() int {
-	c := render.PlayerColors[colorIndex%len(render.PlayerColors)]
+	c := colorIndex % numPlayerColors
 	colorIndex++
 	return c
 }

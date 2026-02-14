@@ -1,13 +1,19 @@
 package render
 
-import "fmt"
-
-// ANSI escape code helpers
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
 
 const (
 	ESC   = "\x1b"
 	CSI   = ESC + "["
 	Reset = CSI + "0m"
+
+	// TileWidth is how many screen columns each world tile occupies.
+	// 2 makes tiles appear roughly square since terminal chars are ~2:1.
+	TileWidth = 2
 )
 
 // MoveTo positions the cursor at row, col (1-based).
@@ -30,56 +36,6 @@ func ShowCursor() string {
 	return CSI + "?25h"
 }
 
-// FgColor returns an SGR sequence for the given ANSI color code.
-func FgColor(code int) string {
-	return fmt.Sprintf("%s%dm", CSI, code)
-}
-
-// BgColor returns an SGR sequence for the given ANSI background color code.
-func BgColor(code int) string {
-	return fmt.Sprintf("%s%dm", CSI, code+10)
-}
-
-// ColoredChar returns a character with foreground and optional background color.
-func ColoredChar(ch rune, fg, bg int) string {
-	if bg > 0 {
-		return fmt.Sprintf("%s%s%c%s", FgColor(fg), BgColor(bg), ch, Reset)
-	}
-	return fmt.Sprintf("%s%c%s", FgColor(fg), ch, Reset)
-}
-
-// Named color to ANSI code mapping.
-var ColorNames = map[string]int{
-	"black":   30,
-	"red":     31,
-	"green":   32,
-	"yellow":  33,
-	"blue":    34,
-	"magenta": 35,
-	"cyan":    36,
-	"white":   37,
-	"gray":    90,
-	"grey":    90,
-	"bright_red":     91,
-	"bright_green":   92,
-	"bright_yellow":  93,
-	"bright_blue":    94,
-	"bright_magenta": 95,
-	"bright_cyan":    96,
-	"bright_white":   97,
-}
-
-// PlayerColors is the rotating palette for player display.
-var PlayerColors = []int{91, 92, 93, 94, 95, 96}
-
-// ResolveColor converts a color name to an ANSI code. Defaults to white.
-func ResolveColor(name string) int {
-	if code, ok := ColorNames[name]; ok {
-		return code
-	}
-	return 37 // white
-}
-
 // EnableAltScreen switches to the alternate screen buffer.
 func EnableAltScreen() string {
 	return CSI + "?1049h"
@@ -88,4 +44,90 @@ func EnableAltScreen() string {
 // DisableAltScreen switches back from the alternate screen buffer.
 func DisableAltScreen() string {
 	return CSI + "?1049l"
+}
+
+// PlayerColors is the rotating palette index for player display.
+var PlayerColors = []int{0, 1, 2, 3, 4, 5}
+
+// PlayerFGColors are bright RGB foregrounds for player characters.
+var PlayerFGColors = [][3]uint8{
+	{255, 255, 255},
+	{255, 255, 255},
+	{255, 255, 255},
+	{255, 255, 255},
+	{255, 255, 255},
+	{255, 255, 255},
+}
+
+// PlayerBGColors are the background tints for player tiles.
+var PlayerBGColors = [][3]uint8{
+	{180, 50, 50},  // red
+	{50, 160, 50},  // green
+	{190, 160, 40}, // yellow
+	{50, 80, 180},  // blue
+	{160, 50, 160}, // magenta
+	{50, 160, 160}, // cyan
+}
+
+// WriteCellSGR writes a single cell's full SGR + character to the builder.
+// Uses combined SGR to avoid state leakage between cells.
+func WriteCellSGR(sb *strings.Builder, c Cell) {
+	if c.Bold {
+		sb.WriteString("\x1b[0;1;38;2;")
+	} else {
+		sb.WriteString("\x1b[0;38;2;")
+	}
+	sb.WriteString(strconv.Itoa(int(c.FgR)))
+	sb.WriteByte(';')
+	sb.WriteString(strconv.Itoa(int(c.FgG)))
+	sb.WriteByte(';')
+	sb.WriteString(strconv.Itoa(int(c.FgB)))
+	sb.WriteString(";48;2;")
+	sb.WriteString(strconv.Itoa(int(c.BgR)))
+	sb.WriteByte(';')
+	sb.WriteString(strconv.Itoa(int(c.BgG)))
+	sb.WriteByte(';')
+	sb.WriteString(strconv.Itoa(int(c.BgB)))
+	sb.WriteByte('m')
+	sb.WriteRune(c.Ch)
+}
+
+// AnsiToRGB converts a basic ANSI color code to RGB.
+func AnsiToRGB(code int) (uint8, uint8, uint8) {
+	switch code {
+	case 30:
+		return 0, 0, 0
+	case 31:
+		return 170, 0, 0
+	case 32:
+		return 0, 170, 0
+	case 33:
+		return 170, 170, 0
+	case 34:
+		return 0, 0, 170
+	case 35:
+		return 170, 0, 170
+	case 36:
+		return 0, 170, 170
+	case 37:
+		return 170, 170, 170
+	case 90:
+		return 85, 85, 85
+	case 91:
+		return 255, 85, 85
+	case 92:
+		return 85, 255, 85
+	case 93:
+		return 255, 255, 85
+	case 94:
+		return 85, 85, 255
+	case 95:
+		return 255, 85, 255
+	case 96:
+		return 85, 255, 255
+	case 97:
+		return 255, 255, 255
+	default:
+		return 170, 170, 170
+	}
 }

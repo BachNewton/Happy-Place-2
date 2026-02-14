@@ -17,6 +17,7 @@ const (
 type GameState struct {
 	Players []PlayerSnapshot
 	Map     *maps.Map
+	Tick    uint64
 }
 
 // RenderChan is the per-session channel that receives game state snapshots.
@@ -26,6 +27,7 @@ type RenderChan chan GameState
 type GameLoop struct {
 	world   *World
 	inputCh chan InputEvent
+	tickCount uint64
 
 	mu          sync.RWMutex
 	players     map[string]*Player
@@ -123,11 +125,14 @@ func (gl *GameLoop) tick() {
 	}
 drained:
 
+	gl.tickCount++
+
 	// Build snapshot and broadcast
 	gl.mu.RLock()
 	state := GameState{
 		Players: make([]PlayerSnapshot, 0, len(gl.players)),
 		Map:     gl.world.Map,
+		Tick:    gl.tickCount,
 	}
 	for _, p := range gl.players {
 		state.Players = append(state.Players, p.Snapshot())
