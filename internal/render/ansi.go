@@ -10,10 +10,6 @@ const (
 	ESC   = "\x1b"
 	CSI   = ESC + "["
 	Reset = CSI + "0m"
-
-	// TileWidth is how many screen columns each world tile occupies.
-	// 2 makes tiles appear roughly square since terminal chars are ~2:1.
-	TileWidth = 2
 )
 
 // MoveTo positions the cursor at row, col (1-based).
@@ -59,14 +55,14 @@ var PlayerFGColors = [][3]uint8{
 	{255, 255, 255},
 }
 
-// PlayerBGColors are the background tints for player tiles.
+// PlayerBGColors are the shirt colors for player characters.
 var PlayerBGColors = [][3]uint8{
-	{180, 50, 50},  // red
-	{50, 160, 50},  // green
-	{190, 160, 40}, // yellow
-	{50, 80, 180},  // blue
-	{160, 50, 160}, // magenta
-	{50, 160, 160}, // cyan
+	{200, 60, 60},   // crimson red
+	{55, 175, 70},   // forest green
+	{65, 105, 225},  // royal blue
+	{200, 170, 50},  // golden yellow
+	{170, 60, 180},  // violet
+	{45, 175, 175},  // teal
 }
 
 // WriteCellSGR writes a single cell's full SGR + character to the builder.

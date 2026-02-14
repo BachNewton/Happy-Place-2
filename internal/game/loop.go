@@ -9,7 +9,6 @@ import (
 )
 
 const (
-	TickRate      = 20 // ticks per second
 	InputChanSize = 256
 )
 
@@ -150,6 +149,13 @@ drained:
 
 	gl.tickCount++
 
+	// Update animations for all players
+	gl.mu.RLock()
+	for _, p := range gl.players {
+		updatePlayerAnimation(p)
+	}
+	gl.mu.RUnlock()
+
 	// Build snapshot and broadcast
 	gl.mu.RLock()
 	state := GameState{
@@ -172,6 +178,36 @@ drained:
 	gl.mu.RUnlock()
 }
 
+// updatePlayerAnimation advances animation state each tick.
+func updatePlayerAnimation(p *Player) {
+	// Decrement move cooldown
+	if p.MoveCooldown > 0 {
+		p.MoveCooldown--
+	}
+
+	// Advance animation tick
+	p.AnimTick++
+
+	if p.Anim == AnimWalking {
+		p.AnimTimer--
+		if p.AnimTimer <= 0 {
+			// Walk animation finished, switch to idle
+			p.Anim = AnimIdle
+			p.AnimFrame = 0
+			p.AnimTick = 0
+		} else if p.AnimTick >= WalkFrameInterval {
+			p.AnimFrame = (p.AnimFrame + 1) % 2
+			p.AnimTick = 0
+		}
+	} else {
+		// Idle animation
+		if p.AnimTick >= IdleFrameInterval {
+			p.AnimFrame = (p.AnimFrame + 1) % 2
+			p.AnimTick = 0
+		}
+	}
+}
+
 func (gl *GameLoop) processInput(ev InputEvent) {
 	gl.mu.RLock()
 	player, ok := gl.players[ev.PlayerID]
@@ -180,22 +216,39 @@ func (gl *GameLoop) processInput(ev InputEvent) {
 		return
 	}
 
+	// Check move cooldown
+	if player.MoveCooldown > 0 {
+		return
+	}
+
 	newX, newY := player.X, player.Y
+	var dir Direction
 	switch ev.Action {
 	case ActionUp:
 		newY--
+		dir = DirUp
 	case ActionDown:
 		newY++
+		dir = DirDown
 	case ActionLeft:
 		newX--
+		dir = DirLeft
 	case ActionRight:
 		newX++
+		dir = DirRight
 	default:
 		return
 	}
 
+	// Always update facing direction
+	player.Dir = dir
+
 	if gl.world.CanMoveTo(newX, newY) {
 		player.X = newX
 		player.Y = newY
+		player.Anim = AnimWalking
+		player.AnimTimer = WalkAnimDuration
+		player.MoveCooldown = MoveRepeatDelay
+		player.AnimTick = 0
 	}
 }

@@ -8,10 +8,10 @@ type Viewport struct {
 }
 
 // NewViewport calculates the camera position centered on the player,
-// clamped to map edges. Accounts for TileWidth (each tile = 2 screen cols).
+// clamped to map edges. Each tile occupies TileWidth cols x TileHeight rows.
 func NewViewport(playerX, playerY, termW, termH, mapW, mapH, hudRows int) Viewport {
-	viewW := termW / TileWidth // world tiles visible horizontally
-	viewH := termH - hudRows   // world tiles visible vertically (1:1)
+	viewW := termW / TileWidth              // world tiles visible horizontally
+	viewH := (termH - hudRows) / TileHeight // world tiles visible vertically
 
 	camX := playerX - viewW/2
 	camY := playerY - viewH/2

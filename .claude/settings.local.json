@@ -3,14 +3,15 @@
     "allow": [
       "Bash(dir:*)",
       "WebSearch",
-      "WebFetch(domain:github.com)",
+      "WebFetch",
       "Bash(python:*)",
       "Bash(go build:*)",
       "Bash(go vet:*)",
       "Bash(git add:*)",
       "Bash(git commit -m \"$\\(cat <<''EOF''\nOverhaul renderer with 24-bit RGB color, square tiles, and rich theming\n\nSwitch from basic ANSI codes to true color \\(24-bit RGB\\) rendering.\nEach world tile now renders as 2 terminal columns wide for square\nproportions. Adds themed visuals per tile type \\(lush grass, stone walls,\nanimated water, leafy trees, dirt paths, wooden doors/floors/fences\\),\nposition-based variation for natural look, and a polished dark HUD with\ngradient separator and player-colored name highlight.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
       "Bash(git commit:*)",
-      "Bash(export PATH=\"$HOME/scoop/apps/go/current/bin:$HOME/go/bin:$PATH\")"
+      "Bash(export PATH=\"$HOME/scoop/apps/go/current/bin:$HOME/go/bin:$PATH\")",
+      "Bash(./server.exe:*)"
     ]
   }
 }

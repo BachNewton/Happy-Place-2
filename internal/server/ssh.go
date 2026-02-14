@@ -140,11 +140,14 @@ func (s *SSHServer) handleSession(sess ssh.Session) {
 			players := make([]render.PlayerInfo, len(state.Players))
 			for i, p := range state.Players {
 				players[i] = render.PlayerInfo{
-					ID:    p.ID,
-					Name:  p.Name,
-					X:     p.X,
-					Y:     p.Y,
-					Color: p.Color,
+					ID:        p.ID,
+					Name:      p.Name,
+					X:         p.X,
+					Y:         p.Y,
+					Color:     p.Color,
+					Dir:       int(p.Dir),
+					Anim:      int(p.Anim),
+					AnimFrame: p.AnimFrame,
 				}
 			}
 

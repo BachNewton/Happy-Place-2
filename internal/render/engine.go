@@ -21,10 +21,13 @@ var sentinel = Cell{Ch: '\x00', FgR: 255, BgB: 255, Bold: true}
 
 // PlayerInfo is the minimal player data the renderer needs.
 type PlayerInfo struct {
-	ID    string
-	Name  string
-	X, Y  int
-	Color int // index into PlayerBGColors
+	ID        string
+	Name      string
+	X, Y      int
+	Color     int // index into PlayerBGColors
+	Dir       int // 0=down, 1=up, 2=left, 3=right
+	Anim      int // 0=idle, 1=walking
+	AnimFrame int // current animation frame
 }
 
 // Engine is a per-session double-buffer diff renderer.
@@ -103,51 +106,26 @@ func (e *Engine) Render(
 		}
 	}
 
-	// Fill world tiles (each tile = TileWidth screen columns)
-	for ty := 0; ty < vp.ViewH && ty < e.height; ty++ {
+	// Fill world tiles — each tile is TileWidth x TileHeight screen cells
+	for ty := 0; ty < vp.ViewH; ty++ {
 		for tx := 0; tx < vp.ViewW; tx++ {
 			wx := vp.CamX + tx
 			wy := vp.CamY + ty
-			screenCol := tx * TileWidth
-			if screenCol+1 >= e.width {
-				break
-			}
-
 			tile := tileMap.TileAt(wx, wy)
-			left, right := themeTile(tile, wx, wy, tick)
-			e.next[ty][screenCol] = left
-			e.next[ty][screenCol+1] = right
+			sprite := TileSprite(tile, wx, wy, tick)
+			e.stampSprite(tx*TileWidth, ty*TileHeight, sprite, false)
 		}
 	}
 
-	// Overlay players (each player occupies TileWidth cells)
+	// Overlay players
 	for _, p := range players {
 		lx, ly := vp.WorldToLocal(p.X, p.Y)
 		if lx < 0 {
 			continue
 		}
-		screenCol := lx * TileWidth
-		if screenCol+1 >= e.width || ly >= e.height {
-			continue
-		}
-
-		ch := rune(p.Name[0])
-		if p.ID == viewerID {
-			ch = '@'
-		}
-
-		colorIdx := p.Color % len(PlayerBGColors)
-		bgR, bgG, bgB := PlayerBGColors[colorIdx][0], PlayerBGColors[colorIdx][1], PlayerBGColors[colorIdx][2]
-		fgR, fgG, fgB := PlayerFGColors[colorIdx][0], PlayerFGColors[colorIdx][1], PlayerFGColors[colorIdx][2]
-
-		e.next[ly][screenCol] = Cell{
-			Ch: ch, FgR: fgR, FgG: fgG, FgB: fgB,
-			BgR: bgR, BgG: bgG, BgB: bgB, Bold: true,
-		}
-		e.next[ly][screenCol+1] = Cell{
-			Ch: ' ', FgR: fgR, FgG: fgG, FgB: fgB,
-			BgR: bgR, BgG: bgG, BgB: bgB,
-		}
+		isSelf := p.ID == viewerID
+		sprite := PlayerSprite(p.Dir, p.Anim, p.AnimFrame, p.Color, isSelf, p.Name)
+		e.stampSprite(lx*TileWidth, ly*TileHeight, sprite, true)
 	}
 
 	// Draw HUD
@@ -155,7 +133,7 @@ func (e *Engine) Render(
 
 	// Diff current vs next, emit only changed cells
 	var sb strings.Builder
-	sb.Grow(8192)
+	sb.Grow(16384)
 
 	lastRow, lastCol := -1, -1
 	for y := 0; y < e.height; y++ {
@@ -184,163 +162,26 @@ func (e *Engine) Render(
 	return sb.String()
 }
 
-// --- Tile Theming ---
-
-func themeTile(tile maps.TileDef, wx, wy int, tick uint64) (Cell, Cell) {
-	v := uint(wx*7+wy*13) % 4
-
-	switch tile.Name {
-	case "grass":
-		return themeGrass(v)
-	case "wall":
-		return themeWall(v)
-	case "water":
-		return themeWater(wx, wy, tick)
-	case "tree":
-		return themeTree(v)
-	case "path":
-		return themePath(v)
-	case "door":
-		return themeDoor()
-	case "floor":
-		return themeFloor(v)
-	case "fence":
-		return themeFence(v)
-	default:
-		return themeFallback(tile)
+// stampSprite writes a sprite into the buffer at screen position (sx, sy).
+// When transparent is true, SpriteCell.Transparent cells are skipped.
+func (e *Engine) stampSprite(sx, sy int, sprite Sprite, transparent bool) {
+	for row := 0; row < TileHeight; row++ {
+		screenY := sy + row
+		if screenY < 0 || screenY >= e.height {
+			continue
+		}
+		for col := 0; col < TileWidth; col++ {
+			screenX := sx + col
+			if screenX < 0 || screenX >= e.width {
+				continue
+			}
+			sc := sprite[row][col]
+			if transparent && sc.Transparent {
+				continue
+			}
+			e.next[screenY][screenX] = sc.Cell
+		}
 	}
-}
-
-func themeGrass(v uint) (Cell, Cell) {
-	bgR, bgG, bgB := uint8(28), uint8(65), uint8(28)
-	type grassVar struct {
-		l, r       rune
-		fr, fg, fb uint8
-	}
-	vars := [4]grassVar{
-		{',', ' ', 60, 135, 50},
-		{' ', '.', 50, 115, 42},
-		{'.', ' ', 70, 145, 55},
-		{' ', ' ', 55, 125, 48},
-	}
-	g := vars[v]
-	return Cell{Ch: g.l, FgR: g.fr, FgG: g.fg, FgB: g.fb, BgR: bgR, BgG: bgG, BgB: bgB},
-		Cell{Ch: g.r, FgR: g.fr, FgG: g.fg, FgB: g.fb, BgR: bgR, BgG: bgG, BgB: bgB}
-}
-
-func themeWall(v uint) (Cell, Cell) {
-	type wallVar struct {
-		l, r       rune
-		fr, fg, fb uint8
-		br, bg, bb uint8
-	}
-	vars := [4]wallVar{
-		{'█', '▓', 115, 115, 125, 60, 60, 70},
-		{'▓', '█', 110, 110, 120, 58, 58, 68},
-		{'█', '█', 120, 120, 130, 62, 62, 72},
-		{'▓', '▓', 105, 105, 115, 56, 56, 66},
-	}
-	w := vars[v]
-	return Cell{Ch: w.l, FgR: w.fr, FgG: w.fg, FgB: w.fb, BgR: w.br, BgG: w.bg, BgB: w.bb},
-		Cell{Ch: w.r, FgR: w.fr, FgG: w.fg, FgB: w.fb, BgR: w.br, BgG: w.bg, BgB: w.bb}
-}
-
-func themeWater(wx, wy int, tick uint64) (Cell, Cell) {
-	bgR, bgG, bgB := uint8(15), uint8(38), uint8(95)
-	fgR, fgG, fgB := uint8(70), uint8(130), uint8(210)
-
-	// Animate: shift pattern based on tick and position
-	frame := uint((int(tick/8) + wx*3 + wy*5)) % 4
-	type waterFrame struct{ l, r rune }
-	frames := [4]waterFrame{
-		{'~', ' '},
-		{' ', '~'},
-		{'≈', ' '},
-		{' ', '≈'},
-	}
-	f := frames[frame]
-
-	// Subtle color shimmer
-	shimmer := uint8((int(tick/6) + wx + wy*2) % 3)
-	fgB += shimmer * 15
-
-	return Cell{Ch: f.l, FgR: fgR, FgG: fgG, FgB: fgB, BgR: bgR, BgG: bgG, BgB: bgB},
-		Cell{Ch: f.r, FgR: fgR, FgG: fgG, FgB: fgB, BgR: bgR, BgG: bgG, BgB: bgB}
-}
-
-func themeTree(v uint) (Cell, Cell) {
-	bgR, bgG, bgB := uint8(22), uint8(55), uint8(22)
-	type treeVar struct {
-		ch         rune
-		fr, fg, fb uint8
-	}
-	vars := [4]treeVar{
-		{'♣', 35, 170, 35},
-		{'♠', 30, 155, 30},
-		{'♣', 40, 180, 40},
-		{'♠', 32, 160, 32},
-	}
-	t := vars[v]
-	return Cell{Ch: t.ch, FgR: t.fr, FgG: t.fg, FgB: t.fb, BgR: bgR, BgG: bgG, BgB: bgB, Bold: true},
-		Cell{Ch: ' ', FgR: t.fr, FgG: t.fg, FgB: t.fb, BgR: bgR, BgG: bgG, BgB: bgB}
-}
-
-func themePath(v uint) (Cell, Cell) {
-	bgR, bgG, bgB := uint8(120), uint8(95), uint8(55)
-	fgR, fgG, fgB := uint8(150), uint8(120), uint8(75)
-	type pathVar struct{ l, r rune }
-	vars := [4]pathVar{
-		{'·', ' '},
-		{' ', '·'},
-		{' ', ' '},
-		{'·', '·'},
-	}
-	p := vars[v]
-	return Cell{Ch: p.l, FgR: fgR, FgG: fgG, FgB: fgB, BgR: bgR, BgG: bgG, BgB: bgB},
-		Cell{Ch: p.r, FgR: fgR, FgG: fgG, FgB: fgB, BgR: bgR, BgG: bgG, BgB: bgB}
-}
-
-func themeDoor() (Cell, Cell) {
-	bgR, bgG, bgB := uint8(110), uint8(75), uint8(30)
-	fgR, fgG, fgB := uint8(210), uint8(170), uint8(60)
-	return Cell{Ch: '▐', FgR: fgR, FgG: fgG, FgB: fgB, BgR: bgR, BgG: bgG, BgB: bgB, Bold: true},
-		Cell{Ch: '▌', FgR: fgR, FgG: fgG, FgB: fgB, BgR: bgR, BgG: bgG, BgB: bgB, Bold: true}
-}
-
-func themeFloor(v uint) (Cell, Cell) {
-	bgR, bgG, bgB := uint8(72), uint8(52), uint8(32)
-	fgR, fgG, fgB := uint8(92), uint8(68), uint8(42)
-	type floorVar struct{ l, r rune }
-	vars := [4]floorVar{
-		{' ', ' '},
-		{'·', ' '},
-		{' ', ' '},
-		{' ', '·'},
-	}
-	f := vars[v]
-	return Cell{Ch: f.l, FgR: fgR, FgG: fgG, FgB: fgB, BgR: bgR, BgG: bgG, BgB: bgB},
-		Cell{Ch: f.r, FgR: fgR, FgG: fgG, FgB: fgB, BgR: bgR, BgG: bgG, BgB: bgB}
-}
-
-func themeFence(v uint) (Cell, Cell) {
-	bgR, bgG, bgB := uint8(28), uint8(65), uint8(28) // grass behind
-	fgR, fgG, fgB := uint8(155), uint8(115), uint8(55)
-	ch := rune('│')
-	if v%2 == 1 {
-		ch = '┃'
-	}
-	return Cell{Ch: ch, FgR: fgR, FgG: fgG, FgB: fgB, BgR: bgR, BgG: bgG, BgB: bgB, Bold: true},
-		Cell{Ch: ' ', FgR: fgR, FgG: fgG, FgB: fgB, BgR: bgR, BgG: bgG, BgB: bgB}
-}
-
-func themeFallback(tile maps.TileDef) (Cell, Cell) {
-	fgR, fgG, fgB := AnsiToRGB(tile.Fg)
-	bgR, bgG, bgB := uint8(10), uint8(10), uint8(15)
-	if tile.Bg > 0 {
-		bgR, bgG, bgB = AnsiToRGB(tile.Bg)
-	}
-	return Cell{Ch: tile.Char, FgR: fgR, FgG: fgG, FgB: fgB, BgR: bgR, BgG: bgG, BgB: bgB},
-		Cell{Ch: ' ', FgR: fgR, FgG: fgG, FgB: fgB, BgR: bgR, BgG: bgG, BgB: bgB}
 }
 
 // --- HUD ---
