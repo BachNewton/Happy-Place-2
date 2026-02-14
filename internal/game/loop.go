@@ -23,6 +23,12 @@ type GameState struct {
 // RenderChan is the per-session channel that receives game state snapshots.
 type RenderChan chan GameState
 
+// savedState holds persisted player data for reconnecting players.
+type savedState struct {
+	X, Y  int
+	Color int
+}
+
 // GameLoop is the central game loop singleton.
 type GameLoop struct {
 	world   *World
@@ -32,6 +38,7 @@ type GameLoop struct {
 	mu          sync.RWMutex
 	players     map[string]*Player
 	renderChans map[string]RenderChan
+	saved       map[string]savedState // keyed by username
 
 	stopCh chan struct{}
 }
@@ -43,6 +50,7 @@ func NewGameLoop(world *World) *GameLoop {
 		inputCh:     make(chan InputEvent, InputChanSize),
 		players:     make(map[string]*Player),
 		renderChans: make(map[string]RenderChan),
+		saved:       make(map[string]savedState),
 		stopCh:      make(chan struct{}),
 	}
 }
@@ -52,41 +60,56 @@ func (gl *GameLoop) InputChan() chan<- InputEvent {
 	return gl.inputCh
 }
 
-// AddPlayer registers a new player and returns their render channel.
-func (gl *GameLoop) AddPlayer(id, name string) RenderChan {
+// AddPlayer registers a player using their username as identity.
+// If the username was seen before, position and color are restored.
+// Returns the effective player ID and the render channel.
+func (gl *GameLoop) AddPlayer(name string) (string, RenderChan) {
 	gl.mu.Lock()
 	defer gl.mu.Unlock()
 
-	// Handle name collisions
-	finalName := name
-	for _, p := range gl.players {
-		if p.Name == finalName {
-			finalName = fmt.Sprintf("%s_%04d", name, time.Now().UnixNano()%10000)
-			break
+	// If this username is already online, add a suffix
+	id := name
+	if _, online := gl.players[id]; online {
+		id = fmt.Sprintf("%s_%04d", name, time.Now().UnixNano()%10000)
+	}
+
+	var player *Player
+	if ss, ok := gl.saved[name]; ok {
+		// Restore saved state
+		player = &Player{
+			ID:    id,
+			Name:  name,
+			X:     ss.X,
+			Y:     ss.Y,
+			Color: ss.Color,
+		}
+	} else {
+		// Brand new player
+		spawnX, spawnY := gl.world.SpawnPoint()
+		player = &Player{
+			ID:    id,
+			Name:  name,
+			X:     spawnX,
+			Y:     spawnY,
+			Color: NextPlayerColor(),
 		}
 	}
 
-	spawnX, spawnY := gl.world.SpawnPoint()
-	player := &Player{
-		ID:    id,
-		Name:  finalName,
-		X:     spawnX,
-		Y:     spawnY,
-		Color: NextPlayerColor(),
-	}
 	gl.players[id] = player
-
 	ch := make(RenderChan, 2)
 	gl.renderChans[id] = ch
-	return ch
+	return id, ch
 }
 
-// RemovePlayer unregisters a player.
+// RemovePlayer saves the player's state and unregisters them.
 func (gl *GameLoop) RemovePlayer(id string) {
 	gl.mu.Lock()
 	defer gl.mu.Unlock()
 
-	delete(gl.players, id)
+	if p, ok := gl.players[id]; ok {
+		gl.saved[p.Name] = savedState{X: p.X, Y: p.Y, Color: p.Color}
+		delete(gl.players, id)
+	}
 	if ch, ok := gl.renderChans[id]; ok {
 		close(ch)
 		delete(gl.renderChans, id)

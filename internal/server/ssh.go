@@ -18,9 +18,6 @@ type SSHServer struct {
 	gameLoop *game.GameLoop
 	addr     string
 	hostKey  string
-
-	mu        sync.Mutex
-	sessionID int
 }
 
 // NewSSHServer creates a new SSH server bound to the given address.
@@ -58,21 +55,15 @@ func (s *SSHServer) handleSession(sess ssh.Session) {
 		return
 	}
 
-	// Generate unique player ID
-	s.mu.Lock()
-	s.sessionID++
-	playerID := fmt.Sprintf("player_%d", s.sessionID)
-	s.mu.Unlock()
-
 	username := sess.User()
 	if username == "" {
 		username = "Anonymous"
 	}
 
-	log.Printf("Player connected: %s (%s)", username, playerID)
+	// Register with game loop (username = identity)
+	playerID, renderCh := s.gameLoop.AddPlayer(username)
 
-	// Register with game loop
-	renderCh := s.gameLoop.AddPlayer(playerID, username)
+	log.Printf("Player connected: %s (%s)", username, playerID)
 	defer func() {
 		s.gameLoop.RemovePlayer(playerID)
 		log.Printf("Player disconnected: %s (%s)", username, playerID)
