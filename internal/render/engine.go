@@ -317,11 +317,7 @@ func (e *Engine) renderDebugView(viewerColor int, tick uint64) string {
 
 	// Layout constants
 	gap := 1
-	spriteStride := TileWidth + gap
-	maxCols := (e.width - 1) / spriteStride
-	if maxCols < 1 {
-		maxCols = 1
-	}
+	rowHeight := TileHeight + 2 // label row + sprite + gap row
 
 	// Helper to write a label at screen position
 	writeLabel := func(row, col int, label string) {
@@ -333,32 +329,45 @@ func (e *Engine) renderDebugView(viewerColor int, tick uint64) string {
 		}
 	}
 
-	// --- Tile sprites ---
-	tileNames := TileNames()
-	startY := 2
-	for i, name := range tileNames {
-		col := i % maxCols
-		row := i / maxCols
-		sx := col * spriteStride
-		sy := startY + row*(TileHeight+2) // +2 for label + gap
+	// Flow layout cursor
+	curX := 0
+	curY := 2
 
-		writeLabel(sy, sx, name)
-		sprite := tileFuncs[name](0, 0, tick)
-		e.stampSprite(sx, sy+1, sprite, false)
+	// placeGroup places a labeled sprite group, advancing the cursor.
+	// Returns the x position where sprites start.
+	placeGroup := func(label string, width int) (int, int) {
+		// Wrap if this group won't fit on the current row
+		if curX > 0 && curX+width > e.width {
+			curX = 0
+			curY += rowHeight
+		}
+		sx, sy := curX, curY
+		writeLabel(sy, sx, label)
+		curX += width + gap*2
+		return sx, sy
+	}
+
+	// --- Tile sprites with variants ---
+	tileNames := TileNames()
+	for _, name := range tileNames {
+		variants := TileVariants(name)
+		groupWidth := variants*TileWidth + (variants-1)*gap
+
+		sx, sy := placeGroup(name, groupWidth)
+		for v := 0; v < variants; v++ {
+			sprite := tileRegistry[name].fn(0, v, tick)
+			e.stampSprite(sx+v*(TileWidth+gap), sy+1, sprite, false)
+		}
 	}
 
 	// --- Player sprites ---
-	tileRows := (len(tileNames) + maxCols - 1) / maxCols
-	playerStartY := startY + tileRows*(TileHeight+2) + 1
+	// Start on a new row after tiles
+	curX = 0
+	curY += rowHeight
 
 	dirNames := []string{"down", "up", "left", "right"}
 	for i, dName := range dirNames {
-		col := i % maxCols
-		row := i / maxCols
-		sx := col * spriteStride
-		sy := playerStartY + row*(TileHeight+2)
-
-		writeLabel(sy, sx, dName)
+		sx, sy := placeGroup(dName, TileWidth)
 		sprite := PlayerSprite(i, 0, 0, viewerColor, true, "Debug")
 		e.stampSprite(sx, sy+1, sprite, true)
 	}

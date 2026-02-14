@@ -5,19 +5,25 @@ import "happy-place-2/internal/maps"
 // tileFunc generates a sprite for a tile at world position (wx,wy) at the given tick.
 type tileFunc func(wx, wy int, tick uint64) Sprite
 
+// tileEntry holds a tile's sprite generator and how many variants it has.
+type tileEntry struct {
+	fn       tileFunc
+	variants int // number of distinct variants (1 = no variation)
+}
+
 // tileNames is the ordered list of all known tile types (used by debug view).
 var tileNames = []string{"grass", "wall", "water", "tree", "path", "door", "floor", "fence"}
 
-// tileFuncs maps tile names to their sprite generators.
-var tileFuncs = map[string]tileFunc{
-	"grass": func(wx, wy int, tick uint64) Sprite { return grassSprite(uint(wx*7+wy*13)%4, tick) },
-	"wall":  func(wx, wy int, _ uint64) Sprite { return wallSprite(wx, wy) },
-	"water": func(wx, wy int, tick uint64) Sprite { return waterSprite(wx, wy, tick) },
-	"tree":  func(wx, wy int, _ uint64) Sprite { return treeSprite(uint(wx*7+wy*13) % 4) },
-	"path":  func(wx, wy int, _ uint64) Sprite { return pathSprite(uint(wx*7+wy*13) % 4) },
-	"door":  func(_, _ int, _ uint64) Sprite { return doorSprite() },
-	"floor": func(wx, wy int, _ uint64) Sprite { return floorSprite(uint(wx*7+wy*13) % 4) },
-	"fence": func(wx, wy int, _ uint64) Sprite { return fenceSprite(uint(wx*7+wy*13) % 4) },
+// tileRegistry maps tile names to their sprite generators and variant counts.
+var tileRegistry = map[string]tileEntry{
+	"grass": {func(wx, wy int, tick uint64) Sprite { return grassSprite(uint(wx*7+wy*13)%4, tick) }, 4},
+	"wall":  {func(wx, wy int, _ uint64) Sprite { return wallSprite(wx, wy) }, 1},
+	"water": {func(wx, wy int, tick uint64) Sprite { return waterSprite(wx, wy, tick) }, 1},
+	"tree":  {func(wx, wy int, _ uint64) Sprite { return treeSprite(uint(wx*7+wy*13) % 4) }, 4},
+	"path":  {func(wx, wy int, _ uint64) Sprite { return pathSprite(uint(wx*7+wy*13) % 4) }, 4},
+	"door":  {func(_, _ int, _ uint64) Sprite { return doorSprite() }, 1},
+	"floor": {func(wx, wy int, _ uint64) Sprite { return floorSprite(uint(wx*7+wy*13) % 4) }, 4},
+	"fence": {func(wx, wy int, _ uint64) Sprite { return fenceSprite(uint(wx*7+wy*13) % 4) }, 4},
 }
 
 // TileNames returns the ordered list of all known tile type names.
@@ -25,10 +31,18 @@ func TileNames() []string {
 	return tileNames
 }
 
+// TileVariants returns the number of visual variants for the given tile name.
+func TileVariants(name string) int {
+	if e, ok := tileRegistry[name]; ok {
+		return e.variants
+	}
+	return 1
+}
+
 // TileSprite returns the sprite for a tile at world position (wx,wy) at the given tick.
 func TileSprite(tile maps.TileDef, wx, wy int, tick uint64) Sprite {
-	if fn, ok := tileFuncs[tile.Name]; ok {
-		return fn(wx, wy, tick)
+	if e, ok := tileRegistry[tile.Name]; ok {
+		return e.fn(wx, wy, tick)
 	}
 	return fallbackSprite(tile)
 }
