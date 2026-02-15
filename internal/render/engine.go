@@ -29,6 +29,7 @@ type PlayerInfo struct {
 	Anim      int // 0=idle, 1=walking
 	AnimFrame int // current animation frame
 	DebugView bool
+	DebugPage int
 }
 
 // Engine is a per-session double-buffer diff renderer.
@@ -38,6 +39,7 @@ type Engine struct {
 	next          [][]Cell
 	firstFrame    bool
 	lastDebugView bool
+	lastDebugPage int
 }
 
 // NewEngine creates a renderer for the given terminal dimensions.
@@ -79,6 +81,7 @@ func (e *Engine) Render(
 	players []PlayerInfo,
 	termW, termH int,
 	tick uint64,
+	totalPlayers int,
 ) string {
 	if termW != e.width || termH != e.height {
 		e.Resize(termW, termH)
@@ -89,6 +92,7 @@ func (e *Engine) Render(
 	var viewerName string
 	var viewerColor int
 	var viewerDebug bool
+	var viewerDebugPage int
 	for _, p := range players {
 		if p.ID == viewerID {
 			viewerX = p.X
@@ -96,6 +100,7 @@ func (e *Engine) Render(
 			viewerName = p.Name
 			viewerColor = p.Color
 			viewerDebug = p.DebugView
+			viewerDebugPage = p.DebugPage
 			break
 		}
 	}
@@ -104,9 +109,13 @@ func (e *Engine) Render(
 		e.firstFrame = true
 		e.lastDebugView = viewerDebug
 	}
+	if viewerDebugPage != e.lastDebugPage {
+		e.firstFrame = true
+		e.lastDebugPage = viewerDebugPage
+	}
 
 	if viewerDebug {
-		return e.renderDebugView(viewerColor, tick)
+		return e.renderDebugView(viewerColor, viewerDebugPage, tick)
 	}
 
 	vp := NewViewport(viewerX, viewerY, termW, termH, tileMap.Width, tileMap.Height, HUDRows)
@@ -125,7 +134,7 @@ func (e *Engine) Render(
 			wx := vp.CamX + tx
 			wy := vp.CamY + ty
 			tile := tileMap.TileAt(wx, wy)
-			sprite := TileSprite(tile, wx, wy, tick)
+			sprite := TileSprite(tile, wx, wy, tick, tileMap)
 			e.stampSprite(vp.OffsetX+tx*TileWidth, vp.OffsetY+ty*TileHeight, sprite, false)
 		}
 	}
@@ -142,7 +151,7 @@ func (e *Engine) Render(
 	}
 
 	// Draw HUD
-	e.drawHUD(viewerName, viewerColor, len(players), tileMap.Name)
+	e.drawHUD(viewerName, viewerColor, totalPlayers, tileMap.Name)
 
 	// Diff current vs next, emit only changed cells
 	var sb strings.Builder
@@ -296,8 +305,9 @@ func (e *Engine) writeHUDTextLine(row int, text string, fgR, fgG, fgB, bgR, bgG,
 	}
 }
 
-// renderDebugView draws a grid of all tile sprites and player direction sprites.
-func (e *Engine) renderDebugView(viewerColor int, tick uint64) string {
+// renderDebugView draws a paginated debug view of tile and player sprites.
+// Page 0: non-connected tile sprites, Page 1: connected tile sprites, Page 2: player sprites.
+func (e *Engine) renderDebugView(viewerColor, page int, tick uint64) string {
 	// Clear buffer with dark background
 	bgCell := Cell{Ch: ' ', BgR: 18, BgG: 18, BgB: 24}
 	for y := 0; y < e.height; y++ {
@@ -306,11 +316,16 @@ func (e *Engine) renderDebugView(viewerColor int, tick uint64) string {
 		}
 	}
 
+	pageNames := []string{"Tiles", "Connected", "Players"}
+	if page < 0 || page >= len(pageNames) {
+		page = 0
+	}
+
 	// Title row
-	title := "SPRITE DEBUG (~ to close)"
+	title := fmt.Sprintf("SPRITE DEBUG [%d/%d: %s] (\u2190\u2192 nav, ~ close)", page+1, len(pageNames), pageNames[page])
 	titleRunes := []rune(title)
 	for i, r := range titleRunes {
-		if i < e.width {
+		if i+1 < e.width {
 			e.next[0][i+1] = Cell{Ch: r, FgR: 255, FgG: 220, FgB: 100, BgR: 18, BgG: 18, BgB: 24, Bold: true}
 		}
 	}
@@ -334,9 +349,7 @@ func (e *Engine) renderDebugView(viewerColor int, tick uint64) string {
 	curY := 2
 
 	// placeGroup places a labeled sprite group, advancing the cursor.
-	// Returns the x position where sprites start.
 	placeGroup := func(label string, width int) (int, int) {
-		// Wrap if this group won't fit on the current row
 		if curX > 0 && curX+width > e.width {
 			curX = 0
 			curY += rowHeight
@@ -347,29 +360,98 @@ func (e *Engine) renderDebugView(viewerColor int, tick uint64) string {
 		return sx, sy
 	}
 
-	// --- Tile sprites with variants ---
-	for i := range tileList {
-		entry := &tileList[i]
-		groupWidth := entry.variants*TileWidth + (entry.variants-1)*gap
-
-		sx, sy := placeGroup(entry.name, groupWidth)
-		for v := 0; v < entry.variants; v++ {
-			wx, wy := variantCoord(v, entry.variants)
-			sprite := entry.fn(wx, wy, tick)
-			e.stampSprite(sx+v*(TileWidth+gap), sy+1, sprite, false)
+	switch page {
+	case 0: // Non-connected tile sprites with variants
+		for i := range tileList {
+			entry := &tileList[i]
+			if entry.connected {
+				continue
+			}
+			groupWidth := entry.variants*TileWidth + (entry.variants-1)*gap
+			sx, sy := placeGroup(entry.name, groupWidth)
+			for v := 0; v < entry.variants; v++ {
+				wx, wy := variantCoord(v, entry.variants)
+				sprite := entry.fn(wx, wy, tick, nil)
+				e.stampSprite(sx+v*(TileWidth+gap), sy+1, sprite, false)
+			}
 		}
-	}
 
-	// --- Player sprites ---
-	// Start on a new row after tiles
-	curX = 0
-	curY += rowHeight
+	case 1: // Connected tile sprites — practical preview
+		// Pattern shows corners, runs, T-junction, and cross in context
+		pattern := [][]bool{
+			{false, true, true, true, true, true, false},
+			{false, true, false, true, false, true, false},
+			{false, true, true, true, true, true, false},
+			{false, false, false, true, false, false, false},
+			{false, false, false, true, false, false, false},
+		}
+		patH := len(pattern)
+		patW := len(pattern[0])
 
-	dirNames := []string{"down", "up", "left", "right"}
-	for i, dName := range dirNames {
-		sx, sy := placeGroup(dName, TileWidth)
-		sprite := PlayerSprite(i, 0, 0, viewerColor, true, "Debug")
-		e.stampSprite(sx, sy+1, sprite, true)
+		patMask := func(px, py int) uint8 {
+			var mask uint8
+			if py > 0 && pattern[py-1][px] {
+				mask |= ConnN
+			}
+			if px+1 < patW && pattern[py][px+1] {
+				mask |= ConnE
+			}
+			if py+1 < patH && pattern[py+1][px] {
+				mask |= ConnS
+			}
+			if px > 0 && pattern[py][px-1] {
+				mask |= ConnW
+			}
+			return mask
+		}
+
+		for i := range tileList {
+			entry := &tileList[i]
+			if !entry.connected {
+				continue
+			}
+
+			// Variant row
+			groupWidth := entry.variants*TileWidth + (entry.variants-1)*gap
+			sx, sy := placeGroup(entry.name, groupWidth)
+			for v := 0; v < entry.variants; v++ {
+				sprite := entry.connFn(ConnE|ConnW, uint(v), tick)
+				e.stampSprite(sx+v*(TileWidth+gap), sy+1, sprite, false)
+			}
+
+			// Practical preview grid with grass background
+			curX = 0
+			curY += rowHeight
+			writeLabel(curY, curX, "preview")
+			gridY := curY + 1
+
+			for py := 0; py < patH; py++ {
+				for px := 0; px < patW; px++ {
+					screenX := curX + px*TileWidth
+					screenY := gridY + py*TileHeight
+					if pattern[py][px] {
+						mask := patMask(px, py)
+						v := TileHash(px, py) % uint(entry.variants)
+						sprite := entry.connFn(mask, v, tick)
+						e.stampSprite(screenX, screenY, sprite, false)
+					} else {
+						sprite := grassSprite(TileHash(px, py)%4, tick)
+						e.stampSprite(screenX, screenY, sprite, false)
+					}
+				}
+			}
+
+			curY = gridY + patH*TileHeight + 1
+			curX = 0
+		}
+
+	case 2: // Player sprites
+		dirNames := []string{"down", "up", "left", "right"}
+		for i, dName := range dirNames {
+			sx, sy := placeGroup(dName, TileWidth)
+			sprite := PlayerSprite(i, 0, 0, viewerColor, true, "Debug")
+			e.stampSprite(sx, sy+1, sprite, true)
+		}
 	}
 
 	// Diff and emit

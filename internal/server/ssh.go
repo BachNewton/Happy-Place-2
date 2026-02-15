@@ -137,8 +137,8 @@ func (s *SSHServer) handleSession(sess ssh.Session) {
 			termMu.Unlock()
 
 			// Convert game snapshots to render player info
-			players := make([]render.PlayerInfo, len(state.Players))
-			for i, p := range state.Players {
+			players := make([]render.PlayerInfo, len(state.Map.Players))
+			for i, p := range state.Map.Players {
 				players[i] = render.PlayerInfo{
 					ID:        p.ID,
 					Name:      p.Name,
@@ -149,10 +149,11 @@ func (s *SSHServer) handleSession(sess ssh.Session) {
 					Anim:      int(p.Anim),
 					AnimFrame: p.AnimFrame,
 					DebugView: p.DebugView,
+					DebugPage: p.DebugPage,
 				}
 			}
 
-			output := engine.Render(playerID, state.Map, players, w, h, state.Tick)
+			output := engine.Render(playerID, state.Map.Map, players, w, h, state.World.Tick, state.World.TotalPlayers)
 			if len(output) > 0 {
 				io.WriteString(sess, render.SyncStart+output+render.SyncEnd)
 			}
@@ -197,6 +198,12 @@ func parseInput(data []byte) []game.Action {
 			actions = append(actions, game.ActionQuit)
 		case '`', '~':
 			actions = append(actions, game.ActionDebug)
+		case '1':
+			actions = append(actions, game.ActionDebugPage1)
+		case '2':
+			actions = append(actions, game.ActionDebugPage2)
+		case '3':
+			actions = append(actions, game.ActionDebugPage3)
 		case 3: // Ctrl-C
 			actions = append(actions, game.ActionQuit)
 		}

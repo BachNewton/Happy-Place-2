@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	listenAddr = ":2222"
+	listenAddr  = ":2222"
 	hostKeyPath = "host_key"
-	mapPath     = "assets/maps/town.json"
+	mapsDir     = "assets/maps"
+	defaultMap  = "Town Square"
 )
 
 func main() {
@@ -28,19 +29,19 @@ func main() {
 		log.Fatalf("Host key error: %v", err)
 	}
 
-	// Load map
-	var gameMap *maps.Map
-	var err error
-
-	gameMap, err = maps.LoadMap(mapPath)
+	// Load all maps from directory
+	allMaps, err := maps.LoadMaps(mapsDir)
 	if err != nil {
-		log.Printf("Could not load %s: %v — using default map", mapPath, err)
-		gameMap = maps.DefaultMap()
+		log.Printf("Could not load maps from %s: %v — using default map", mapsDir, err)
+		dm := maps.DefaultMap()
+		allMaps = map[string]*maps.Map{dm.Name: dm}
 	}
-	log.Printf("Map loaded: %s (%dx%d)", gameMap.Name, gameMap.Width, gameMap.Height)
+	for name, m := range allMaps {
+		log.Printf("Map loaded: %s (%dx%d, %d portals)", name, m.Width, m.Height, len(m.Portals))
+	}
 
 	// Create game world and loop
-	world := game.NewWorld(gameMap)
+	world := game.NewWorld(allMaps, defaultMap)
 	gameLoop := game.NewGameLoop(world)
 
 	// Start game loop in background

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 )
 
 // colorNames maps color names from JSON to ANSI codes.
@@ -43,6 +45,13 @@ type TileDef struct {
 	Name     string
 }
 
+// Portal defines a teleport point linking two maps.
+type Portal struct {
+	X, Y              int
+	TargetMap         string
+	TargetX, TargetY  int
+}
+
 // Spawn defines the spawn point coordinates.
 type Spawn struct {
 	X int `json:"x"`
@@ -51,23 +60,33 @@ type Spawn struct {
 
 // Map represents a loaded tile map.
 type Map struct {
-	Name   string
-	Width  int
-	Height int
-	SpawnX int
-	SpawnY int
-	Tiles  [][]int   // [y][x] tile indices
-	Legend []TileDef // index → tile definition
+	Name    string
+	Width   int
+	Height  int
+	SpawnX  int
+	SpawnY  int
+	Tiles   [][]int   // [y][x] tile indices
+	Legend  []TileDef // index → tile definition
+	Portals []Portal
 }
 
 // jsonMap is the on-disk JSON format.
 type jsonMap struct {
-	Name   string            `json:"name"`
-	Width  int               `json:"width"`
-	Height int               `json:"height"`
-	Spawn  Spawn             `json:"spawn"`
-	Tiles  [][]int           `json:"tiles"`
-	Legend map[string]jsonTile `json:"legend"`
+	Name    string             `json:"name"`
+	Width   int                `json:"width"`
+	Height  int                `json:"height"`
+	Spawn   Spawn              `json:"spawn"`
+	Tiles   [][]int            `json:"tiles"`
+	Legend  map[string]jsonTile `json:"legend"`
+	Portals []jsonPortal        `json:"portals,omitempty"`
+}
+
+type jsonPortal struct {
+	X         int    `json:"x"`
+	Y         int    `json:"y"`
+	TargetMap string `json:"target_map"`
+	TargetX   int    `json:"target_x"`
+	TargetY   int    `json:"target_y"`
 }
 
 type jsonTile struct {
@@ -127,14 +146,24 @@ func LoadMap(path string) (*Map, error) {
 		}
 	}
 
+	portals := make([]Portal, len(jm.Portals))
+	for i, jp := range jm.Portals {
+		portals[i] = Portal{
+			X: jp.X, Y: jp.Y,
+			TargetMap: jp.TargetMap,
+			TargetX: jp.TargetX, TargetY: jp.TargetY,
+		}
+	}
+
 	return &Map{
-		Name:   jm.Name,
-		Width:  jm.Width,
-		Height: jm.Height,
-		SpawnX: jm.Spawn.X,
-		SpawnY: jm.Spawn.Y,
-		Tiles:  jm.Tiles,
-		Legend: legend,
+		Name:    jm.Name,
+		Width:   jm.Width,
+		Height:  jm.Height,
+		SpawnX:  jm.Spawn.X,
+		SpawnY:  jm.Spawn.Y,
+		Tiles:   jm.Tiles,
+		Legend:  legend,
+		Portals: portals,
 	}, nil
 }
 
@@ -154,6 +183,52 @@ func (m *Map) TileAt(x, y int) TileDef {
 // IsWalkable checks if the tile at x,y can be walked on.
 func (m *Map) IsWalkable(x, y int) bool {
 	return m.TileAt(x, y).Walkable
+}
+
+// PortalAt returns the portal at the given coordinates, or nil if none.
+func (m *Map) PortalAt(x, y int) *Portal {
+	for i := range m.Portals {
+		if m.Portals[i].X == x && m.Portals[i].Y == y {
+			return &m.Portals[i]
+		}
+	}
+	return nil
+}
+
+// LoadMaps scans a directory for *.json files, loads each as a Map,
+// and returns them indexed by Name. Validates portal target_map references.
+func LoadMaps(dir string) (map[string]*Map, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("read maps directory: %w", err)
+	}
+
+	allMaps := make(map[string]*Map)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		m, err := LoadMap(path)
+		if err != nil {
+			return nil, fmt.Errorf("load %s: %w", entry.Name(), err)
+		}
+		if _, exists := allMaps[m.Name]; exists {
+			return nil, fmt.Errorf("duplicate map name %q in %s", m.Name, entry.Name())
+		}
+		allMaps[m.Name] = m
+	}
+
+	// Validate portal references
+	for name, m := range allMaps {
+		for _, p := range m.Portals {
+			if _, ok := allMaps[p.TargetMap]; !ok {
+				return nil, fmt.Errorf("map %q portal at (%d,%d) references unknown map %q", name, p.X, p.Y, p.TargetMap)
+			}
+		}
+	}
+
+	return allMaps, nil
 }
 
 // DefaultMap returns a simple fallback map if no JSON file is available.

@@ -11,6 +11,9 @@ const (
 	ActionRight
 	ActionQuit
 	ActionDebug
+	ActionDebugPage1
+	ActionDebugPage2
+	ActionDebugPage3
 )
 
 // Direction the player is facing.
@@ -39,10 +42,11 @@ type InputEvent struct {
 
 // Player holds the game state for a connected player.
 type Player struct {
-	ID    string
-	Name  string
-	X, Y  int
-	Color int // index into the render color palette
+	ID      string
+	Name    string
+	X, Y    int
+	Color   int // index into the render color palette
+	MapName string
 
 	Dir          Direction
 	Anim         AnimState
@@ -51,6 +55,7 @@ type Player struct {
 	AnimTick     int // ticks since last frame advance
 	MoveCooldown int // ticks until next move allowed
 	DebugView    bool
+	DebugPage    int
 }
 
 // PlayerSnapshot is a read-only copy of player state for rendering.
@@ -59,10 +64,12 @@ type PlayerSnapshot struct {
 	Name      string
 	X, Y      int
 	Color     int
+	MapName   string
 	Dir       Direction
 	Anim      AnimState
 	AnimFrame int
 	DebugView bool
+	DebugPage int
 }
 
 // Snapshot returns a read-only copy of the player.
@@ -73,10 +80,12 @@ func (p *Player) Snapshot() PlayerSnapshot {
 		X:         p.X,
 		Y:         p.Y,
 		Color:     p.Color,
+		MapName:   p.MapName,
 		Dir:       p.Dir,
 		Anim:      p.Anim,
 		AnimFrame: p.AnimFrame,
 		DebugView: p.DebugView,
+		DebugPage: p.DebugPage,
 	}
 }
 

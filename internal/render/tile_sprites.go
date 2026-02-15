@@ -3,13 +3,15 @@ package render
 import "happy-place-2/internal/maps"
 
 // tileFunc generates a sprite for a tile at world position (wx,wy) at the given tick.
-type tileFunc func(wx, wy int, tick uint64) Sprite
+type tileFunc func(wx, wy int, tick uint64, m *maps.Map) Sprite
 
 // tileEntry holds a named tile's sprite generator and its variant count.
 type tileEntry struct {
-	name     string
-	fn       tileFunc
-	variants int // number of distinct variants (1 = no variation)
+	name      string
+	fn        tileFunc
+	variants  int // number of distinct variants (1 = no variation)
+	connected bool
+	connFn    func(mask uint8, v uint, tick uint64) Sprite
 }
 
 // TileHash maps world coordinates to a deterministic pseudo-random value.
@@ -37,7 +39,7 @@ func variantCoord(v, variants int) (int, int) {
 func variantTile(name string, n int, fn func(v uint, tick uint64) Sprite) tileEntry {
 	return tileEntry{
 		name: name,
-		fn: func(wx, wy int, tick uint64) Sprite {
+		fn: func(wx, wy int, tick uint64, m *maps.Map) Sprite {
 			return fn(TileHash(wx, wy)%uint(n), tick)
 		},
 		variants: n,
@@ -49,10 +51,53 @@ func variantTile(name string, n int, fn func(v uint, tick uint64) Sprite) tileEn
 func posVariantTile(name string, n int, fn func(wx, wy int, v uint, tick uint64) Sprite) tileEntry {
 	return tileEntry{
 		name: name,
-		fn: func(wx, wy int, tick uint64) Sprite {
+		fn: func(wx, wy int, tick uint64, m *maps.Map) Sprite {
 			return fn(wx, wy, TileHash(wx, wy)%uint(n), tick)
 		},
 		variants: n,
+	}
+}
+
+// Connection bitmask constants for connected tiles.
+const (
+	ConnN uint8 = 1
+	ConnE uint8 = 2
+	ConnS uint8 = 4
+	ConnW uint8 = 8
+)
+
+// neighborMask computes a 4-bit bitmask of same-name cardinal neighbors.
+func neighborMask(name string, wx, wy int, m *maps.Map) uint8 {
+	if m == nil {
+		return 0
+	}
+	var mask uint8
+	if m.TileAt(wx, wy-1).Name == name {
+		mask |= ConnN
+	}
+	if m.TileAt(wx+1, wy).Name == name {
+		mask |= ConnE
+	}
+	if m.TileAt(wx, wy+1).Name == name {
+		mask |= ConnS
+	}
+	if m.TileAt(wx-1, wy).Name == name {
+		mask |= ConnW
+	}
+	return mask
+}
+
+// connectedTile builds a tileEntry for tiles that adapt based on same-name neighbors.
+func connectedTile(name string, n int, fn func(mask uint8, v uint, tick uint64) Sprite) tileEntry {
+	return tileEntry{
+		name: name,
+		fn: func(wx, wy int, tick uint64, m *maps.Map) Sprite {
+			mask := neighborMask(name, wx, wy, m)
+			return fn(mask, TileHash(wx, wy)%uint(n), tick)
+		},
+		variants:  n,
+		connected: true,
+		connFn:    fn,
 	}
 }
 
@@ -66,7 +111,7 @@ var tileList = []tileEntry{
 	variantTile("path", 4, func(v uint, _ uint64) Sprite { return pathSprite(v) }),
 	variantTile("door", 1, func(_ uint, _ uint64) Sprite { return doorSprite() }),
 	variantTile("floor", 4, func(v uint, _ uint64) Sprite { return floorSprite(v) }),
-	variantTile("fence", 4, func(v uint, _ uint64) Sprite { return fenceSprite(v) }),
+	connectedTile("fence", 2, func(mask uint8, v uint, _ uint64) Sprite { return fenceSprite(mask, v) }),
 	variantTile("flowers", 6, func(v uint, _ uint64) Sprite { return flowerSprite(v) }),
 }
 
@@ -85,9 +130,9 @@ func init() {
 }
 
 // TileSprite returns the sprite for a tile at world position (wx,wy) at the given tick.
-func TileSprite(tile maps.TileDef, wx, wy int, tick uint64) Sprite {
+func TileSprite(tile maps.TileDef, wx, wy int, tick uint64, m *maps.Map) Sprite {
 	if e, ok := tileIndex[tile.Name]; ok {
-		return e.fn(wx, wy, tick)
+		return e.fn(wx, wy, tick, m)
 	}
 	return fallbackSprite(tile)
 }
@@ -342,30 +387,49 @@ func floorSprite(v uint) Sprite {
 
 // --- Fence ---
 
-func fenceSprite(v uint) Sprite {
+func fenceSprite(mask uint8, v uint) Sprite {
 	bgR, bgG, bgB := uint8(28), uint8(65), uint8(28)
 	fgR, fgG, fgB := uint8(155), uint8(115), uint8(55)
+	railR, railG, railB := fgR-10, fgG-10, fgB-5
 
 	s := FillSprite(' ', 0, 0, 0, bgR, bgG, bgB)
 
-	// Posts at cols 1, 5, 9
-	for _, col := range []int{1, 5, 9} {
-		for y := 1; y < 4; y++ {
-			s[y][col] = SCBold('║', fgR, fgG, fgB, bgR, bgG, bgB)
+	// Center post always present (cols 4-5, rows 1-3)
+	for y := 1; y <= 3; y++ {
+		s[y][4] = SCBold('║', fgR, fgG, fgB, bgR, bgG, bgB)
+		s[y][5] = SCBold('║', fgR, fgG, fgB, bgR, bgG, bgB)
+	}
+
+	// North connection: extend vertical rails to row 0
+	if mask&ConnN != 0 {
+		s[0][4] = SCBold('║', fgR, fgG, fgB, bgR, bgG, bgB)
+		s[0][5] = SCBold('║', fgR, fgG, fgB, bgR, bgG, bgB)
+	}
+
+	// South connection: extend vertical rails to row 4
+	if mask&ConnS != 0 {
+		s[4][4] = SCBold('║', fgR, fgG, fgB, bgR, bgG, bgB)
+		s[4][5] = SCBold('║', fgR, fgG, fgB, bgR, bgG, bgB)
+	}
+
+	// East connection: horizontal rails cols 6-9
+	if mask&ConnE != 0 {
+		for x := 6; x <= 9; x++ {
+			s[1][x] = SC('═', railR, railG, railB, bgR, bgG, bgB)
+			s[3][x] = SC('═', railR, railG, railB, bgR, bgG, bgB)
 		}
 	}
 
-	// Rails at rows 1 and 3
-	for _, row := range []int{1, 3} {
-		for x := 0; x < TileWidth; x++ {
-			if x == 1 || x == 5 || x == 9 {
-				continue
-			}
-			s[row][x] = SC('═', fgR-10, fgG-10, fgB-5, bgR, bgG, bgB)
+	// West connection: horizontal rails cols 0-3
+	if mask&ConnW != 0 {
+		for x := 0; x <= 3; x++ {
+			s[1][x] = SC('═', railR, railG, railB, bgR, bgG, bgB)
+			s[3][x] = SC('═', railR, railG, railB, bgR, bgG, bgB)
 		}
 	}
 
-	if v%2 == 0 {
+	// Grass tuft decoration only when no south connection
+	if mask&ConnS == 0 && v%2 == 0 {
 		s[4][3] = SC(',', 50, 115, 42, bgR, bgG, bgB)
 		s[4][7] = SC('.', 60, 135, 50, bgR, bgG, bgB)
 	}

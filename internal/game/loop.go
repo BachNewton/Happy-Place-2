@@ -12,11 +12,22 @@ const (
 	InputChanSize = 256
 )
 
+// WorldState holds world-wide info shared across all maps.
+type WorldState struct {
+	TotalPlayers int
+	Tick         uint64
+}
+
+// MapState holds the state for a single map sent to a session.
+type MapState struct {
+	Map     *maps.Map
+	Players []PlayerSnapshot
+}
+
 // GameState is a snapshot sent to each session for rendering.
 type GameState struct {
-	Players []PlayerSnapshot
-	Map     *maps.Map
-	Tick    uint64
+	World WorldState
+	Map   MapState
 }
 
 // RenderChan is the per-session channel that receives game state snapshots.
@@ -24,8 +35,9 @@ type RenderChan chan GameState
 
 // savedState holds persisted player data for reconnecting players.
 type savedState struct {
-	X, Y  int
-	Color int
+	X, Y    int
+	Color   int
+	MapName string
 }
 
 // GameLoop is the central game loop singleton.
@@ -60,7 +72,7 @@ func (gl *GameLoop) InputChan() chan<- InputEvent {
 }
 
 // AddPlayer registers a player using their username as identity.
-// If the username was seen before, position and color are restored.
+// If the username was seen before, position, color, and map are restored.
 // Returns the effective player ID and the render channel.
 func (gl *GameLoop) AddPlayer(name string) (string, RenderChan) {
 	gl.mu.Lock()
@@ -74,23 +86,29 @@ func (gl *GameLoop) AddPlayer(name string) (string, RenderChan) {
 
 	var player *Player
 	if ss, ok := gl.saved[name]; ok {
-		// Restore saved state
+		// Validate saved map still exists, fall back to default
+		mapName := ss.MapName
+		if gl.world.GetMap(mapName) == nil {
+			mapName, ss.X, ss.Y = gl.world.SpawnPoint()
+		}
 		player = &Player{
-			ID:    id,
-			Name:  name,
-			X:     ss.X,
-			Y:     ss.Y,
-			Color: ss.Color,
+			ID:      id,
+			Name:    name,
+			X:       ss.X,
+			Y:       ss.Y,
+			Color:   ss.Color,
+			MapName: mapName,
 		}
 	} else {
 		// Brand new player
-		spawnX, spawnY := gl.world.SpawnPoint()
+		mapName, spawnX, spawnY := gl.world.SpawnPoint()
 		player = &Player{
-			ID:    id,
-			Name:  name,
-			X:     spawnX,
-			Y:     spawnY,
-			Color: NextPlayerColor(),
+			ID:      id,
+			Name:    name,
+			X:       spawnX,
+			Y:       spawnY,
+			Color:   NextPlayerColor(),
+			MapName: mapName,
 		}
 	}
 
@@ -106,7 +124,7 @@ func (gl *GameLoop) RemovePlayer(id string) {
 	defer gl.mu.Unlock()
 
 	if p, ok := gl.players[id]; ok {
-		gl.saved[p.Name] = savedState{X: p.X, Y: p.Y, Color: p.Color}
+		gl.saved[p.Name] = savedState{X: p.X, Y: p.Y, Color: p.Color, MapName: p.MapName}
 		delete(gl.players, id)
 	}
 	if ch, ok := gl.renderChans[id]; ok {
@@ -156,19 +174,32 @@ drained:
 	}
 	gl.mu.RUnlock()
 
-	// Build snapshot and broadcast
+	// Build per-player snapshots grouped by map
 	gl.mu.RLock()
-	state := GameState{
-		Players: make([]PlayerSnapshot, 0, len(gl.players)),
-		Map:     gl.world.Map,
-		Tick:    gl.tickCount,
-	}
+	totalPlayers := len(gl.players)
+
+	// Group player snapshots by map name
+	byMap := make(map[string][]PlayerSnapshot)
 	for _, p := range gl.players {
-		state.Players = append(state.Players, p.Snapshot())
+		byMap[p.MapName] = append(byMap[p.MapName], p.Snapshot())
 	}
 
-	// Non-blocking send to each render channel
-	for _, ch := range gl.renderChans {
+	ws := WorldState{
+		TotalPlayers: totalPlayers,
+		Tick:         gl.tickCount,
+	}
+
+	// Send each player a GameState with only their map's players
+	for id, ch := range gl.renderChans {
+		p := gl.players[id]
+		m := gl.world.GetMap(p.MapName)
+		state := GameState{
+			World: ws,
+			Map: MapState{
+				Map:     m,
+				Players: byMap[p.MapName],
+			},
+		}
 		select {
 		case ch <- state:
 		default:
@@ -222,6 +253,35 @@ func (gl *GameLoop) processInput(ev InputEvent) {
 		return
 	}
 
+	// Debug page navigation (only when debug view is open)
+	if player.DebugView {
+		const debugPageCount = 3
+		switch ev.Action {
+		case ActionLeft:
+			player.DebugPage = (player.DebugPage - 1 + debugPageCount) % debugPageCount
+			return
+		case ActionRight:
+			player.DebugPage = (player.DebugPage + 1) % debugPageCount
+			return
+		case ActionDebugPage1:
+			player.DebugPage = 0
+			return
+		case ActionDebugPage2:
+			player.DebugPage = 1
+			return
+		case ActionDebugPage3:
+			player.DebugPage = 2
+			return
+		default:
+			return // ignore other actions in debug mode
+		}
+	}
+
+	// Ignore page actions outside debug view
+	if ev.Action == ActionDebugPage1 || ev.Action == ActionDebugPage2 || ev.Action == ActionDebugPage3 {
+		return
+	}
+
 	// Check move cooldown
 	if player.MoveCooldown > 0 {
 		return
@@ -249,12 +309,21 @@ func (gl *GameLoop) processInput(ev InputEvent) {
 	// Always update facing direction
 	player.Dir = dir
 
-	if gl.world.CanMoveTo(newX, newY) {
+	canMove := gl.world.CanMoveTo(player.MapName, newX, newY)
+	if canMove {
 		player.X = newX
 		player.Y = newY
 		player.Anim = AnimWalking
 		player.AnimTimer = WalkAnimDuration
 		player.MoveCooldown = MoveRepeatDelay
 		player.AnimTick = 0
+
+		// Check for portal at new position
+		portal := gl.world.PortalAt(player.MapName, newX, newY)
+		if portal != nil {
+			player.MapName = portal.TargetMap
+			player.X = portal.TargetX
+			player.Y = portal.TargetY
+		}
 	}
 }
