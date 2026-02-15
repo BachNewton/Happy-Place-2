@@ -5,10 +5,9 @@ import "happy-place-2/internal/maps"
 // tileFunc generates a sprite for a tile at world position (wx,wy) at the given tick.
 type tileFunc func(wx, wy int, tick uint64) Sprite
 
-// tileEntry holds a tile's sprite generator and its variant count.
-// All variant selection must go through TileHash so the debug view can
-// compute coordinates that produce each variant automatically.
+// tileEntry holds a named tile's sprite generator and its variant count.
 type tileEntry struct {
+	name     string
 	fn       tileFunc
 	variants int // number of distinct variants (1 = no variation)
 }
@@ -23,19 +22,33 @@ func TileHash(wx, wy int) uint {
 // variantCoord returns a (wx, wy) pair that produces the given variant index
 // when passed through TileHash(wx, wy) % variants.
 func variantCoord(v, variants int) (int, int) {
-	for wx := 0; wx < 100; wx++ {
-		if int(TileHash(wx, 0))%variants == v {
-			return wx, 0
+	for wy := 0; wy < 100; wy++ {
+		for wx := 0; wx < 100; wx++ {
+			if int(TileHash(wx, wy))%variants == v {
+				return wx, wy
+			}
 		}
 	}
 	return 0, 0
 }
 
-// variantTile builds a tileEntry that computes TileHash % n automatically
-// and passes the variant index to the sprite function. The variant count
-// is defined once here and flows through everywhere.
-func variantTile(n int, fn func(wx, wy int, v uint, tick uint64) Sprite) tileEntry {
+// variantTile builds a tileEntry for tiles whose appearance depends only
+// on a variant index and the tick (the common case).
+func variantTile(name string, n int, fn func(v uint, tick uint64) Sprite) tileEntry {
 	return tileEntry{
+		name: name,
+		fn: func(wx, wy int, tick uint64) Sprite {
+			return fn(TileHash(wx, wy)%uint(n), tick)
+		},
+		variants: n,
+	}
+}
+
+// posVariantTile builds a tileEntry for tiles that also need world position
+// beyond variant selection (e.g., wall mortar line offsets).
+func posVariantTile(name string, n int, fn func(wx, wy int, v uint, tick uint64) Sprite) tileEntry {
+	return tileEntry{
+		name: name,
 		fn: func(wx, wy int, tick uint64) Sprite {
 			return fn(wx, wy, TileHash(wx, wy)%uint(n), tick)
 		},
@@ -43,38 +56,37 @@ func variantTile(n int, fn func(wx, wy int, v uint, tick uint64) Sprite) tileEnt
 	}
 }
 
-// tileNames is the ordered list of all known tile types (used by debug view).
-var tileNames = []string{"grass", "wall", "water", "tree", "path", "door", "floor", "fence", "flowers"}
-
-// tileRegistry maps tile names to their sprite generators and variant counts.
-var tileRegistry = map[string]tileEntry{
-	"grass": variantTile(4, func(_, _ int, v uint, tick uint64) Sprite { return grassSprite(v, tick) }),
-	"wall":  variantTile(4, func(wx, wy int, v uint, _ uint64) Sprite { return wallSprite(wx, wy, v) }),
-	"water": {func(wx, wy int, tick uint64) Sprite { return waterSprite(wx, wy, tick) }, 1},
-	"tree":  variantTile(4, func(_, _ int, v uint, _ uint64) Sprite { return treeSprite(v) }),
-	"path":  variantTile(4, func(_, _ int, v uint, _ uint64) Sprite { return pathSprite(v) }),
-	"door":  {func(_, _ int, _ uint64) Sprite { return doorSprite() }, 1},
-	"floor": variantTile(4, func(_, _ int, v uint, _ uint64) Sprite { return floorSprite(v) }),
-	"fence":   variantTile(4, func(_, _ int, v uint, _ uint64) Sprite { return fenceSprite(v) }),
-	"flowers": variantTile(6, func(_, _ int, v uint, _ uint64) Sprite { return flowerSprite(v) }),
+// tileList is the single source of truth for all tile types.
+// Order here determines debug view order. Names must be unique.
+var tileList = []tileEntry{
+	variantTile("grass", 4, func(v uint, tick uint64) Sprite { return grassSprite(v, tick) }),
+	posVariantTile("wall", 4, func(wx, wy int, v uint, _ uint64) Sprite { return wallSprite(wx, wy, v) }),
+	posVariantTile("water", 1, func(wx, wy int, _ uint, tick uint64) Sprite { return waterSprite(wx, wy, tick) }),
+	variantTile("tree", 4, func(v uint, _ uint64) Sprite { return treeSprite(v) }),
+	variantTile("path", 4, func(v uint, _ uint64) Sprite { return pathSprite(v) }),
+	variantTile("door", 1, func(_ uint, _ uint64) Sprite { return doorSprite() }),
+	variantTile("floor", 4, func(v uint, _ uint64) Sprite { return floorSprite(v) }),
+	variantTile("fence", 4, func(v uint, _ uint64) Sprite { return fenceSprite(v) }),
+	variantTile("flowers", 6, func(v uint, _ uint64) Sprite { return flowerSprite(v) }),
 }
 
-// TileNames returns the ordered list of all known tile type names.
-func TileNames() []string {
-	return tileNames
-}
+// tileIndex maps tile names to entries for O(1) lookup. Built in init().
+var tileIndex map[string]*tileEntry
 
-// TileVariants returns the number of visual variants for the given tile name.
-func TileVariants(name string) int {
-	if e, ok := tileRegistry[name]; ok {
-		return e.variants
+func init() {
+	tileIndex = make(map[string]*tileEntry, len(tileList))
+	for i := range tileList {
+		name := tileList[i].name
+		if _, exists := tileIndex[name]; exists {
+			panic("duplicate tile name: " + name)
+		}
+		tileIndex[name] = &tileList[i]
 	}
-	return 1
 }
 
 // TileSprite returns the sprite for a tile at world position (wx,wy) at the given tick.
 func TileSprite(tile maps.TileDef, wx, wy int, tick uint64) Sprite {
-	if e, ok := tileRegistry[tile.Name]; ok {
+	if e, ok := tileIndex[tile.Name]; ok {
 		return e.fn(wx, wy, tick)
 	}
 	return fallbackSprite(tile)

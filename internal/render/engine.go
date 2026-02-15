@@ -348,12 +348,11 @@ func (e *Engine) renderDebugView(viewerColor int, tick uint64) string {
 	}
 
 	// --- Tile sprites with variants ---
-	tileNames := TileNames()
-	for _, name := range tileNames {
-		entry := tileRegistry[name]
+	for i := range tileList {
+		entry := &tileList[i]
 		groupWidth := entry.variants*TileWidth + (entry.variants-1)*gap
 
-		sx, sy := placeGroup(name, groupWidth)
+		sx, sy := placeGroup(entry.name, groupWidth)
 		for v := 0; v < entry.variants; v++ {
 			wx, wy := variantCoord(v, entry.variants)
 			sprite := entry.fn(wx, wy, tick)
