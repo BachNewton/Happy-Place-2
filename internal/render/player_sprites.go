@@ -54,7 +54,7 @@ func pant(r, g, b uint8) (uint8, uint8, uint8) {
 //  _  BR BR BR _
 //  _  BK SK BK _
 //  BL BL BL BL BL
-//  _  BL BL BL _
+//  SK BL BL BL SK
 //  _  SH _  SH _
 func playerDown(bR, bG, bB uint8) Sprite {
 	s := clearSprite()
@@ -75,10 +75,12 @@ func playerDown(bR, bG, bB uint8) Sprite {
 	px(&s, 2, 2, bR, bG, bB)
 	px(&s, 2, 3, bR, bG, bB)
 	px(&s, 2, 4, bR, bG, bB)
-	// Row 3: pants (darkened shirt color)
+	// Row 3: hands + pants
+	px(&s, 3, 0, skinR, skinG, skinB)
 	px(&s, 3, 1, pR, pG, pB)
 	px(&s, 3, 2, pR, pG, pB)
 	px(&s, 3, 3, pR, pG, pB)
+	px(&s, 3, 4, skinR, skinG, skinB)
 	// Row 4: shoes
 	px(&s, 4, 1, shoeR, shoeG, shoeB)
 	px(&s, 4, 3, shoeR, shoeG, shoeB)
@@ -89,7 +91,7 @@ func playerDown(bR, bG, bB uint8) Sprite {
 //  _  BR BR BR _
 //  _  BR BR BR _
 //  BL BL BL BL BL
-//  _  BL BL BL _
+//  SK BL BL BL SK
 //  _  SH _  SH _
 func playerUp(bR, bG, bB uint8) Sprite {
 	s := clearSprite()
@@ -108,10 +110,12 @@ func playerUp(bR, bG, bB uint8) Sprite {
 	px(&s, 2, 2, bR, bG, bB)
 	px(&s, 2, 3, bR, bG, bB)
 	px(&s, 2, 4, bR, bG, bB)
-	// Row 3: pants
+	// Row 3: hands + pants
+	px(&s, 3, 0, skinR, skinG, skinB)
 	px(&s, 3, 1, pR, pG, pB)
 	px(&s, 3, 2, pR, pG, pB)
 	px(&s, 3, 3, pR, pG, pB)
+	px(&s, 3, 4, skinR, skinG, skinB)
 	// Row 4: shoes
 	px(&s, 4, 1, shoeR, shoeG, shoeB)
 	px(&s, 4, 3, shoeR, shoeG, shoeB)
@@ -122,7 +126,7 @@ func playerUp(bR, bG, bB uint8) Sprite {
 //  _  _  BR BR _
 //  _  _  SK BK _
 //  _  BL BL BL BL
-//  _  _  BL BL _
+//  _  SK BL BL SK
 //  _  _  SH _  SH
 func playerRight(bR, bG, bB uint8) Sprite {
 	s := clearSprite()
@@ -140,9 +144,11 @@ func playerRight(bR, bG, bB uint8) Sprite {
 	px(&s, 2, 2, bR, bG, bB)
 	px(&s, 2, 3, bR, bG, bB)
 	px(&s, 2, 4, bR, bG, bB)
-	// Row 3: pants
+	// Row 3: hands + pants
+	px(&s, 3, 1, skinR, skinG, skinB)
 	px(&s, 3, 2, pR, pG, pB)
 	px(&s, 3, 3, pR, pG, pB)
+	px(&s, 3, 4, skinR, skinG, skinB)
 	// Row 4: shoes
 	px(&s, 4, 2, shoeR, shoeG, shoeB)
 	px(&s, 4, 4, shoeR, shoeG, shoeB)
@@ -153,7 +159,7 @@ func playerRight(bR, bG, bB uint8) Sprite {
 //  _  BR BR _  _
 //  _  BK SK _  _
 //  BL BL BL BL _
-//  _  BL BL _  _
+//  SK BL BL SK _
 //  SH _  SH _  _
 func playerLeft(bR, bG, bB uint8) Sprite {
 	s := clearSprite()
@@ -171,9 +177,11 @@ func playerLeft(bR, bG, bB uint8) Sprite {
 	px(&s, 2, 1, bR, bG, bB)
 	px(&s, 2, 2, bR, bG, bB)
 	px(&s, 2, 3, bR, bG, bB)
-	// Row 3: pants
+	// Row 3: hands + pants
+	px(&s, 3, 0, skinR, skinG, skinB)
 	px(&s, 3, 1, pR, pG, pB)
 	px(&s, 3, 2, pR, pG, pB)
+	px(&s, 3, 3, skinR, skinG, skinB)
 	// Row 4: shoes
 	px(&s, 4, 0, shoeR, shoeG, shoeB)
 	px(&s, 4, 2, shoeR, shoeG, shoeB)
