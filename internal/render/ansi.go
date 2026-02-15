@@ -10,6 +10,12 @@ const (
 	ESC   = "\x1b"
 	CSI   = ESC + "["
 	Reset = CSI + "0m"
+
+	// Synchronized output (DEC private mode 2026).
+	// Tells the terminal to buffer all output and render atomically,
+	// preventing tearing when large portions of the screen change.
+	SyncStart = CSI + "?2026h"
+	SyncEnd   = CSI + "?2026l"
 )
 
 // MoveTo positions the cursor at row, col (1-based).

@@ -154,7 +154,7 @@ func (s *SSHServer) handleSession(sess ssh.Session) {
 
 			output := engine.Render(playerID, state.Map, players, w, h, state.Tick)
 			if len(output) > 0 {
-				io.WriteString(sess, output)
+				io.WriteString(sess, render.SyncStart+output+render.SyncEnd)
 			}
 		}
 	}
