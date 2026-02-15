@@ -12,7 +12,8 @@ Multiplayer SSH terminal RPG. Players connect via any SSH client, move through a
 ## Quick Start
 
 ```bash
-go run ./cmd/server/
+# Dev server with hot reload (rebuilds + restarts on file changes):
+air
 # In another terminal:
 ssh -o StrictHostKeyChecking=no -p 2222 YourName@localhost
 ```

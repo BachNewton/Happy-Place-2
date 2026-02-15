@@ -282,32 +282,43 @@ func (gl *GameLoop) processInput(ev InputEvent) {
 		return
 	}
 
-	// Check move cooldown
-	if player.MoveCooldown > 0 {
-		return
-	}
-
-	newX, newY := player.X, player.Y
+	// Determine desired facing direction
 	var dir Direction
 	switch ev.Action {
 	case ActionUp:
-		newY--
 		dir = DirUp
 	case ActionDown:
-		newY++
 		dir = DirDown
 	case ActionLeft:
-		newX--
 		dir = DirLeft
 	case ActionRight:
-		newX++
 		dir = DirRight
 	default:
 		return
 	}
 
-	// Always update facing direction
-	player.Dir = dir
+	// If facing a different direction, just turn (no move, no cooldown)
+	if player.Dir != dir {
+		player.Dir = dir
+		return
+	}
+
+	// Already facing this direction — attempt movement
+	if player.MoveCooldown > 0 {
+		return
+	}
+
+	newX, newY := player.X, player.Y
+	switch dir {
+	case DirUp:
+		newY--
+	case DirDown:
+		newY++
+	case DirLeft:
+		newX--
+	case DirRight:
+		newX++
+	}
 
 	canMove := gl.world.CanMoveTo(player.MapName, newX, newY)
 	if canMove {
