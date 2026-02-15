@@ -1,60 +1,70 @@
 package render
 
 // Viewport computes camera coordinates for a player's view.
-// All coordinates are in world tile units.
+// CamX/CamY are in world tile units. OffsetX/OffsetY are the screen-cell
+// position where the first tile's top-left is stamped (0 or negative for
+// partial tiles).
 type Viewport struct {
-	CamX, CamY   int // top-left world coordinate
-	ViewW, ViewH int // visible world tiles
+	CamX, CamY       int // top-left world tile coordinate
+	ViewW, ViewH     int // visible world tiles (including partials)
+	OffsetX, OffsetY int // screen offset for the first tile (0 or negative)
 }
 
 // NewViewport calculates the camera position centered on the player,
 // clamped to map edges. Each tile occupies TileWidth cols x TileHeight rows.
 func NewViewport(playerX, playerY, termW, termH, mapW, mapH, hudRows int) Viewport {
-	viewW := termW / TileWidth              // world tiles visible horizontally
-	viewH := (termH - hudRows) / TileHeight // world tiles visible vertically
+	screenW := termW
+	screenH := termH - hudRows
 
-	camX := playerX - viewW/2
-	camY := playerY - viewH/2
+	// Center player's tile center on screen center (pixel-level)
+	camPixelX := playerX*TileWidth + TileWidth/2 - screenW/2
+	camPixelY := playerY*TileHeight + TileHeight/2 - screenH/2
 
-	// Clamp to map edges
-	if camX < 0 {
-		camX = 0
+	// Clamp to map pixel edges
+	maxPixelX := mapW*TileWidth - screenW
+	maxPixelY := mapH*TileHeight - screenH
+	if camPixelX < 0 {
+		camPixelX = 0
 	}
-	if camY < 0 {
-		camY = 0
+	if camPixelY < 0 {
+		camPixelY = 0
 	}
+	if maxPixelX > 0 && camPixelX > maxPixelX {
+		camPixelX = maxPixelX
+	}
+	if maxPixelY > 0 && camPixelY > maxPixelY {
+		camPixelY = maxPixelY
+	}
+
+	// Derive tile camera + sub-tile offset
+	camX := camPixelX / TileWidth
+	camY := camPixelY / TileHeight
+	offsetX := -(camPixelX % TileWidth)
+	offsetY := -(camPixelY % TileHeight)
+
+	// Tiles needed to cover screen (including partials)
+	viewW := (screenW - offsetX + TileWidth - 1) / TileWidth
+	viewH := (screenH - offsetY + TileHeight - 1) / TileHeight
+
+	// Don't exceed map bounds
 	if camX+viewW > mapW {
-		camX = mapW - viewW
-		if camX < 0 {
-			camX = 0
-		}
+		viewW = mapW - camX
 	}
 	if camY+viewH > mapH {
-		camY = mapH - viewH
-		if camY < 0 {
-			camY = 0
-		}
+		viewH = mapH - camY
 	}
 
 	return Viewport{
-		CamX:  camX,
-		CamY:  camY,
-		ViewW: viewW,
-		ViewH: viewH,
+		CamX:    camX,
+		CamY:    camY,
+		ViewW:   viewW,
+		ViewH:   viewH,
+		OffsetX: offsetX,
+		OffsetY: offsetY,
 	}
 }
 
-// IsVisible checks if a world position is within the viewport.
-func (v Viewport) IsVisible(wx, wy int) bool {
-	return wx >= v.CamX && wx < v.CamX+v.ViewW &&
-		wy >= v.CamY && wy < v.CamY+v.ViewH
-}
-
-// WorldToLocal converts world coordinates to viewport-local tile coordinates.
-// Returns (-1,-1) if not visible.
-func (v Viewport) WorldToLocal(wx, wy int) (int, int) {
-	if !v.IsVisible(wx, wy) {
-		return -1, -1
-	}
-	return wx - v.CamX, wy - v.CamY
+// WorldToScreen converts world tile coordinates to screen-cell coordinates.
+func (v Viewport) WorldToScreen(wx, wy int) (int, int) {
+	return (wx-v.CamX)*TileWidth + v.OffsetX, (wy-v.CamY)*TileHeight + v.OffsetY
 }

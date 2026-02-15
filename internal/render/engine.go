@@ -126,19 +126,19 @@ func (e *Engine) Render(
 			wy := vp.CamY + ty
 			tile := tileMap.TileAt(wx, wy)
 			sprite := TileSprite(tile, wx, wy, tick)
-			e.stampSprite(tx*TileWidth, ty*TileHeight, sprite, false)
+			e.stampSprite(vp.OffsetX+tx*TileWidth, vp.OffsetY+ty*TileHeight, sprite, false)
 		}
 	}
 
 	// Overlay players
 	for _, p := range players {
-		lx, ly := vp.WorldToLocal(p.X, p.Y)
-		if lx < 0 {
+		sx, sy := vp.WorldToScreen(p.X, p.Y)
+		if sx+TileWidth <= 0 || sx >= termW || sy+TileHeight <= 0 || sy >= (termH-HUDRows) {
 			continue
 		}
 		isSelf := p.ID == viewerID
 		sprite := PlayerSprite(p.Dir, p.Anim, p.AnimFrame, p.Color, isSelf, p.Name)
-		e.stampSprite(lx*TileWidth, ly*TileHeight, sprite, true)
+		e.stampSprite(sx, sy, sprite, true)
 	}
 
 	// Draw HUD
