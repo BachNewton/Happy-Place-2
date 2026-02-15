@@ -5,25 +5,58 @@ import "happy-place-2/internal/maps"
 // tileFunc generates a sprite for a tile at world position (wx,wy) at the given tick.
 type tileFunc func(wx, wy int, tick uint64) Sprite
 
-// tileEntry holds a tile's sprite generator and how many variants it has.
+// tileEntry holds a tile's sprite generator and its variant count.
+// All variant selection must go through TileHash so the debug view can
+// compute coordinates that produce each variant automatically.
 type tileEntry struct {
 	fn       tileFunc
 	variants int // number of distinct variants (1 = no variation)
 }
 
+// TileHash maps world coordinates to a deterministic pseudo-random value.
+// All tiles must use this (via % variants) for variant selection so the
+// debug view can automatically find coordinates for every variant.
+func TileHash(wx, wy int) uint {
+	return uint(wx*7 + wy*13)
+}
+
+// variantCoord returns a (wx, wy) pair that produces the given variant index
+// when passed through TileHash(wx, wy) % variants.
+func variantCoord(v, variants int) (int, int) {
+	for wx := 0; wx < 100; wx++ {
+		if int(TileHash(wx, 0))%variants == v {
+			return wx, 0
+		}
+	}
+	return 0, 0
+}
+
+// variantTile builds a tileEntry that computes TileHash % n automatically
+// and passes the variant index to the sprite function. The variant count
+// is defined once here and flows through everywhere.
+func variantTile(n int, fn func(wx, wy int, v uint, tick uint64) Sprite) tileEntry {
+	return tileEntry{
+		fn: func(wx, wy int, tick uint64) Sprite {
+			return fn(wx, wy, TileHash(wx, wy)%uint(n), tick)
+		},
+		variants: n,
+	}
+}
+
 // tileNames is the ordered list of all known tile types (used by debug view).
-var tileNames = []string{"grass", "wall", "water", "tree", "path", "door", "floor", "fence"}
+var tileNames = []string{"grass", "wall", "water", "tree", "path", "door", "floor", "fence", "flowers"}
 
 // tileRegistry maps tile names to their sprite generators and variant counts.
 var tileRegistry = map[string]tileEntry{
-	"grass": {func(wx, wy int, tick uint64) Sprite { return grassSprite(uint(wx*7+wy*13)%4, tick) }, 4},
-	"wall":  {func(wx, wy int, _ uint64) Sprite { return wallSprite(wx, wy) }, 1},
+	"grass": variantTile(4, func(_, _ int, v uint, tick uint64) Sprite { return grassSprite(v, tick) }),
+	"wall":  variantTile(4, func(wx, wy int, v uint, _ uint64) Sprite { return wallSprite(wx, wy, v) }),
 	"water": {func(wx, wy int, tick uint64) Sprite { return waterSprite(wx, wy, tick) }, 1},
-	"tree":  {func(wx, wy int, _ uint64) Sprite { return treeSprite(uint(wx*7+wy*13) % 4) }, 4},
-	"path":  {func(wx, wy int, _ uint64) Sprite { return pathSprite(uint(wx*7+wy*13) % 4) }, 4},
+	"tree":  variantTile(4, func(_, _ int, v uint, _ uint64) Sprite { return treeSprite(v) }),
+	"path":  variantTile(4, func(_, _ int, v uint, _ uint64) Sprite { return pathSprite(v) }),
 	"door":  {func(_, _ int, _ uint64) Sprite { return doorSprite() }, 1},
-	"floor": {func(wx, wy int, _ uint64) Sprite { return floorSprite(uint(wx*7+wy*13) % 4) }, 4},
-	"fence": {func(wx, wy int, _ uint64) Sprite { return fenceSprite(uint(wx*7+wy*13) % 4) }, 4},
+	"floor": variantTile(4, func(_, _ int, v uint, _ uint64) Sprite { return floorSprite(v) }),
+	"fence":   variantTile(4, func(_, _ int, v uint, _ uint64) Sprite { return fenceSprite(v) }),
+	"flowers": variantTile(6, func(_, _ int, v uint, _ uint64) Sprite { return flowerSprite(v) }),
 }
 
 // TileNames returns the ordered list of all known tile type names.
@@ -87,7 +120,7 @@ func grassSprite(v uint, tick uint64) Sprite {
 
 // --- Wall ---
 
-func wallSprite(wx, wy int) Sprite {
+func wallSprite(wx, wy int, v uint) Sprite {
 	stoneR, stoneG, stoneB := uint8(100), uint8(100), uint8(110)
 	mortarR, mortarG, mortarB := uint8(60), uint8(60), uint8(70)
 
@@ -113,7 +146,6 @@ func wallSprite(wx, wy int) Sprite {
 		s[y][mortarX] = SC('░', mortarR+20, mortarG+20, mortarB+20, mortarR, mortarG, mortarB)
 	}
 
-	v := uint(wx*3+wy*11) % 4
 	if v == 0 {
 		s[2][3] = SC('▒', stoneR-10, stoneG-10, stoneB-5, mortarR, mortarG, mortarB)
 	} else if v == 1 {
@@ -324,6 +356,60 @@ func fenceSprite(v uint) Sprite {
 	if v%2 == 0 {
 		s[4][3] = SC(',', 50, 115, 42, bgR, bgG, bgB)
 		s[4][7] = SC('.', 60, 135, 50, bgR, bgG, bgB)
+	}
+
+	return s
+}
+
+// --- Flowers ---
+
+func flowerSprite(v uint) Sprite {
+	bgR, bgG, bgB := uint8(28), uint8(65), uint8(28)
+
+	s := FillSprite(' ', 0, 0, 0, bgR, bgG, bgB)
+
+	// 6 flower color palettes
+	type flowerColor struct {
+		r, g, b uint8
+		ch      rune
+	}
+	palettes := [6]flowerColor{
+		{230, 60, 70, '*'},   // red
+		{240, 200, 50, '*'},  // yellow
+		{180, 80, 200, '*'},  // purple
+		{240, 140, 50, '@'},  // orange
+		{230, 130, 170, '@'}, // pink
+		{100, 170, 230, '@'}, // blue
+	}
+
+	stemR, stemG, stemB := uint8(50), uint8(130), uint8(40)
+
+	// Each variant gets a different primary color and flower arrangement
+	fc := palettes[v]
+	// Secondary color from a neighboring palette
+	fc2 := palettes[(v+3)%6]
+
+	type flower struct{ x, y int }
+	arrangements := [6][]flower{
+		{{2, 1}, {7, 0}, {4, 3}, {9, 2}},
+		{{1, 0}, {5, 2}, {8, 4}, {3, 1}},
+		{{0, 2}, {6, 0}, {3, 4}, {8, 1}},
+		{{4, 0}, {1, 3}, {7, 2}, {9, 4}},
+		{{2, 0}, {6, 3}, {0, 4}, {8, 1}},
+		{{5, 1}, {1, 4}, {9, 0}, {3, 2}},
+	}
+
+	for i, f := range arrangements[v] {
+		// Stem below flower (if room)
+		if f.y+1 < TileHeight {
+			s[f.y+1][f.x] = SC('|', stemR, stemG, stemB, bgR, bgG, bgB)
+		}
+		// Alternate primary and secondary colors
+		c := fc
+		if i%2 == 1 {
+			c = fc2
+		}
+		s[f.y][f.x] = SCBold(c.ch, c.r, c.g, c.b, bgR, bgG, bgB)
 	}
 
 	return s
