@@ -60,14 +60,15 @@ type Spawn struct {
 
 // Map represents a loaded tile map.
 type Map struct {
-	Name    string
-	Width   int
-	Height  int
-	SpawnX  int
-	SpawnY  int
-	Tiles   [][]int   // [y][x] tile indices
-	Legend  []TileDef // index → tile definition
-	Portals []Portal
+	Name      string
+	Width     int
+	Height    int
+	SpawnX    int
+	SpawnY    int
+	Tiles     [][]int   // [y][x] tile indices
+	Legend    []TileDef // index → tile definition
+	Portals   []Portal
+	portalIdx map[[2]int]*Portal // built at load time for O(1) lookup
 }
 
 // jsonMap is the on-disk JSON format.
@@ -155,7 +156,7 @@ func LoadMap(path string) (*Map, error) {
 		}
 	}
 
-	return &Map{
+	m := &Map{
 		Name:    jm.Name,
 		Width:   jm.Width,
 		Height:  jm.Height,
@@ -164,7 +165,9 @@ func LoadMap(path string) (*Map, error) {
 		Tiles:   jm.Tiles,
 		Legend:  legend,
 		Portals: portals,
-	}, nil
+	}
+	m.buildPortalIndex()
+	return m, nil
 }
 
 // TileAt returns the tile definition at the given coordinates.
@@ -185,14 +188,17 @@ func (m *Map) IsWalkable(x, y int) bool {
 	return m.TileAt(x, y).Walkable
 }
 
+// buildPortalIndex populates the O(1) portal lookup map.
+func (m *Map) buildPortalIndex() {
+	m.portalIdx = make(map[[2]int]*Portal, len(m.Portals))
+	for i := range m.Portals {
+		m.portalIdx[[2]int{m.Portals[i].X, m.Portals[i].Y}] = &m.Portals[i]
+	}
+}
+
 // PortalAt returns the portal at the given coordinates, or nil if none.
 func (m *Map) PortalAt(x, y int) *Portal {
-	for i := range m.Portals {
-		if m.Portals[i].X == x && m.Portals[i].Y == y {
-			return &m.Portals[i]
-		}
-	}
-	return nil
+	return m.portalIdx[[2]int{x, y}]
 }
 
 // LoadMaps scans a directory for *.json files, loads each as a Map,
