@@ -42,6 +42,21 @@ assets/maps/town.json       # Starter map (60x30)
 - **Render:** Game loop broadcasts `GameState` snapshots to per-session render channels (cap 2, non-blocking drops for slow clients)
 - **Sync:** `sync.RWMutex` protects player registry; position mutations happen only in the game loop goroutine
 
+## Rendering Terminology
+
+- **Viewport:** The visible portion of the world, defined by camera position (`CamX`/`CamY`) and size (`ViewW`/`ViewH`) in world tile units. Centered on the player, clamped to map edges.
+- **World tiles:** The tile grid area filling the upper portion of the screen. Each tile occupies `TileWidth` x `TileHeight` screen cells.
+- **HUD:** The bottom 3 rows of the terminal (`HUDRows = 3`): a separator line, an info bar (player name, map name, online count), and a controls bar.
+- **Sprite:** The pixel-level representation of a tile or player — a `TileWidth` x `TileHeight` grid of `SpriteCell`s stamped into the buffer via `stampSprite`.
+- **Buffers (`current` / `next`):** The double-buffer system. `next` is built each frame, diffed against `current`, and only changed cells are emitted as ANSI output.
+- **Debug view:** An alternate full-screen view (toggled with `~`) showing all tile sprites and player direction sprites in a grid.
+
+## Game World Terminology
+
+- **Map** (`maps.Map`): A loaded tile map — the data layer containing tiles, legend, dimensions, name, and spawn point. Loaded from JSON files in `assets/maps/`. Each map has a `Name` (e.g. `"Town"`) displayed in the HUD.
+- **World** (`game.World`): The gameplay-level wrapper around a Map. Provides game logic helpers like `CanMoveTo()` and `SpawnPoint()`. Currently holds a single Map, but designed as the natural place to expand to multiple maps.
+- **GameState**: The per-tick snapshot broadcast to each session for rendering. Contains all `PlayerSnapshot`s, a `Map` pointer, and the tick count. Currently world-scoped (one map, all players); would become map-scoped when multiple maps are added (each session receives only its map and co-located players).
+
 ## Controls
 
 - **WASD / Arrow Keys:** Move
