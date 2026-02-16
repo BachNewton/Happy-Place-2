@@ -48,9 +48,13 @@ assets/maps/town.json       # Starter map (60x30)
 - **Viewport:** The visible portion of the world, defined by camera position (`CamX`/`CamY`) and size (`ViewW`/`ViewH`) in world tile units. Centered on the player, clamped to map edges.
 - **World tiles:** The tile grid area filling the upper portion of the screen. Each tile occupies `TileWidth` x `TileHeight` screen cells.
 - **HUD:** The bottom 3 rows of the terminal (`HUDRows = 3`): a separator line, an info bar (player name, map name, online count), and a controls bar.
-- **Sprite:** The pixel-level representation of a tile or player — a `TileWidth` x `TileHeight` grid of `SpriteCell`s stamped into the buffer via `stampSprite`.
+- **Sprite** (`Sprite`): A `TileHeight` x `TileWidth` grid of `SpriteCell`s — the visual representation of a single tile-sized layer. Stamped into the buffer via `stampSprite`.
+- **TileSprites** (`TileSprites`): The complete visual output for a tile — a `Base` sprite plus an optional `Overlays` slice. Simple tiles (grass, wall) have only a base. Tall tiles (trees) have a base plus one or more overlays.
+- **Overlay** (`Overlay`): A sprite rendered at a vertical offset above its owning tile. Each overlay has a `Sprite` and a `DY` (tile units upward, e.g. `DY=1` means one tile above the base). Overlay cells can be transparent, letting lower layers show through.
+- **3-pass rendering:** The render loop in `engine.go` draws in three passes: (1) **Ground pass** stamps `TileSprites.Base` for every visible tile and collects overlays, (2) **Player pass** stamps player sprites, (3) **Overlay pass** stamps collected overlays on top of players. This lets players walk behind tall objects like tree canopies.
+- **Tall tile:** A tile whose `TileSprites` includes overlays, making it visually taller than one tile. Trees are 3 tiles tall (base at DY=0, lower canopy at DY=1, upper canopy at DY=2). Built with `tallVariantTile` in `tile_sprites.go`.
 - **Buffers (`current` / `next`):** The double-buffer system. `next` is built each frame, diffed against `current`, and only changed cells are emitted as ANSI output.
-- **Debug view:** An alternate full-screen view (toggled with `~`) showing all tile sprites and player direction sprites in a grid.
+- **Debug view:** An alternate full-screen view (toggled with `~`) showing all tile sprites and player direction sprites in a grid. Tall tiles display their overlays stacked above the base.
 
 ## Game World Terminology
 
@@ -66,6 +70,8 @@ assets/maps/town.json       # Starter map (60x30)
 ## Map Format
 
 Maps are JSON files in `assets/maps/`. See `town.json` for the format. The legend maps tile indices to characters, colors, walkability, and names.
+
+**Building orientation:** Buildings must face south (door on the south wall). The 3-pass rendering system draws overlays on top of players, so tall tiles visually extend upward. Players approaching from the south walk behind overlays (e.g. tree canopies, future roofs). A north-facing door breaks this — the player would be above the building with no layering benefit.
 
 ## Production Deployment
 
