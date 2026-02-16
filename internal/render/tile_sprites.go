@@ -125,6 +125,12 @@ var tileList = []tileEntry{
 	variantTile("floor", 4, func(v uint, _ uint64) Sprite { return floorSprite(v) }),
 	connectedTile("fence", 2, func(mask uint8, v uint, tick uint64) Sprite { return fenceSprite(mask, v, tick) }),
 	variantTile("flowers", 6, func(v uint, _ uint64) Sprite { return flowerSprite(v) }),
+	variantTile("sand", 4, func(v uint, tick uint64) Sprite { return sandSprite(v, tick) }),
+	variantTile("tall_grass", 4, func(v uint, tick uint64) Sprite { return tallGrassSprite(v, tick) }),
+	posVariantTile("rock", 4, func(wx, wy int, v uint, _ uint64) Sprite { return rockSprite(wx, wy, v) }),
+	posVariantTile("shallow_water", 1, func(wx, wy int, _ uint, tick uint64) Sprite { return shallowWaterSprite(wx, wy, tick) }),
+	variantTile("dirt", 4, func(v uint, _ uint64) Sprite { return dirtSprite(v) }),
+	variantTile("bridge", 2, func(v uint, _ uint64) Sprite { return bridgeSprite(v) }),
 }
 
 // tileIndex maps tile names to entries for O(1) lookup. Built in init().
@@ -574,6 +580,209 @@ func flowerSprite(v uint) Sprite {
 			c = fc2
 		}
 		s[f.y][f.x] = SCBold(c.ch, c.r, c.g, c.b, bgR, bgG, bgB)
+	}
+
+	return s
+}
+
+// --- Sand ---
+
+func sandSprite(v uint, tick uint64) Sprite {
+	bgR, bgG, bgB := uint8(194), uint8(178), uint8(128)
+	bgG += uint8(v * 2)
+	bgB -= uint8(v * 3)
+
+	s := FillSprite(' ', 0, 0, 0, bgR, bgG, bgB)
+
+	type grain struct {
+		ch     rune
+		fr, fg, fb uint8
+	}
+	grains := [4]grain{
+		{'.', 170, 155, 105},
+		{',', 165, 148, 98},
+		{'\'', 175, 160, 110},
+		{'`', 160, 142, 95},
+	}
+
+	type pos struct{ x, y int }
+	patterns := [4][]pos{
+		{{1, 0}, {4, 2}, {8, 1}, {6, 4}},
+		{{2, 1}, {7, 3}, {0, 4}, {5, 0}},
+		{{3, 0}, {9, 2}, {1, 3}, {6, 1}},
+		{{0, 2}, {5, 4}, {8, 0}, {3, 3}},
+	}
+
+	frame := int(tick/10) % 2
+
+	for i, p := range patterns[v] {
+		g := grains[i%len(grains)]
+		x := (p.x + frame) % TileWidth
+		s[p.y][x] = SC(g.ch, g.fr, g.fg, g.fb, bgR, bgG, bgB)
+	}
+
+	return s
+}
+
+// --- Tall Grass ---
+
+func tallGrassSprite(v uint, tick uint64) Sprite {
+	bgR, bgG, bgB := uint8(24), uint8(58), uint8(24)
+	bgG += uint8(v * 2)
+
+	s := FillSprite(' ', 0, 0, 0, bgR, bgG, bgB)
+
+	type blade struct {
+		ch         rune
+		fr, fg, fb uint8
+	}
+	blades := [4]blade{
+		{';', 55, 150, 45},
+		{'|', 50, 140, 40},
+		{'/', 60, 155, 50},
+		{';', 45, 135, 38},
+	}
+
+	type pos struct{ x, y int }
+	patterns := [4][]pos{
+		{{1, 0}, {3, 1}, {5, 0}, {7, 2}, {9, 1}, {2, 3}, {6, 4}},
+		{{0, 1}, {2, 0}, {4, 2}, {6, 0}, {8, 1}, {1, 4}, {5, 3}},
+		{{1, 1}, {3, 0}, {5, 2}, {8, 0}, {0, 3}, {4, 4}, {7, 1}},
+		{{2, 0}, {4, 1}, {6, 0}, {9, 2}, {1, 3}, {3, 4}, {7, 0}},
+	}
+
+	frame := int(tick/7) % 3
+
+	for i, p := range patterns[v] {
+		b := blades[i%len(blades)]
+		x := p.x
+		switch frame {
+		case 1:
+			x = (p.x + 1) % TileWidth
+		case 2:
+			x = (p.x + TileWidth - 1) % TileWidth
+		}
+		s[p.y][x] = SC(b.ch, b.fr, b.fg, b.fb, bgR, bgG, bgB)
+	}
+
+	return s
+}
+
+// --- Rock ---
+
+func rockSprite(wx, wy int, v uint) Sprite {
+	bgR, bgG, bgB := uint8(80), uint8(80), uint8(85)
+
+	// Slight brown tint on some variants
+	if v%2 == 1 {
+		bgR += 8
+		bgG += 3
+	}
+
+	s := FillSprite('▒', bgR+20, bgG+20, bgB+15, bgR, bgG, bgB)
+
+	rockChars := []rune{'▓', '▒', '░', '▓', '▒', '░', '▓', '▒'}
+
+	for y := 0; y < TileHeight; y++ {
+		for x := 0; x < TileWidth; x++ {
+			idx := (x*3 + y*7 + wx*5 + wy*11 + int(v)*13) % len(rockChars)
+			ch := rockChars[idx]
+			shade := uint8((idx * 5) % 20)
+			fR := bgR + 15 + shade
+			fG := bgG + 15 + shade
+			fB := bgB + 10 + shade
+			s[y][x] = SC(ch, fR, fG, fB, bgR, bgG, bgB)
+		}
+	}
+
+	return s
+}
+
+// --- Shallow Water ---
+
+func shallowWaterSprite(wx, wy int, tick uint64) Sprite {
+	bgR, bgG, bgB := uint8(25), uint8(60), uint8(120)
+	fgR, fgG, fgB := uint8(80), uint8(170), uint8(210)
+
+	frame := int(tick/10) % 4
+
+	s := FillSprite(' ', fgR, fgG, fgB, bgR, bgG, bgB)
+
+	waveChars := []rune{'~', ' ', ' ', '~', ' ', ' ', '~', ' '}
+
+	for y := 0; y < TileHeight; y++ {
+		rowPhase := (y*3 + wx*5 + wy*7) % len(waveChars)
+		for x := 0; x < TileWidth; x++ {
+			charIdx := (x + rowPhase + frame*2) % len(waveChars)
+			ch := waveChars[charIdx]
+
+			shimmer := uint8(((x + y*2 + int(tick/8)) % 3) * 8)
+			cellFgB := fgB + shimmer
+			if cellFgB < fgB {
+				cellFgB = 255
+			}
+
+			rowBgB := bgB + uint8(y*3)
+
+			s[y][x] = SC(ch, fgR, fgG+10, cellFgB, bgR, bgG, rowBgB)
+		}
+	}
+
+	return s
+}
+
+// --- Dirt ---
+
+func dirtSprite(v uint) Sprite {
+	bgR, bgG, bgB := uint8(100), uint8(70), uint8(35)
+	fgR, fgG, fgB := uint8(125), uint8(90), uint8(50)
+
+	bgR += uint8(v * 2)
+
+	s := FillSprite(' ', fgR, fgG, fgB, bgR, bgG, bgB)
+
+	type pebble struct{ x, y int }
+	pebbles := [4][]pebble{
+		{{1, 0}, {5, 2}, {8, 4}, {3, 1}, {7, 3}},
+		{{2, 1}, {6, 3}, {9, 0}, {0, 4}, {4, 2}},
+		{{0, 0}, {4, 3}, {7, 1}, {2, 4}, {8, 2}},
+		{{3, 0}, {9, 2}, {1, 4}, {6, 1}, {5, 3}},
+	}
+
+	chars := []rune{'·', '.', '·', '.', '·'}
+	for i, p := range pebbles[v] {
+		s[p.y][p.x] = SC(chars[i], fgR, fgG, fgB, bgR, bgG, bgB)
+	}
+
+	return s
+}
+
+// --- Bridge ---
+
+func bridgeSprite(v uint) Sprite {
+	woodR, woodG, woodB := uint8(130), uint8(90), uint8(35)
+	railR, railG, railB := uint8(110), uint8(75), uint8(25)
+
+	// Slight color variation between variants
+	if v == 1 {
+		woodR += 10
+		woodG += 5
+	}
+
+	s := FillSprite(' ', woodR, woodG, woodB, woodR-20, woodG-15, woodB-10)
+
+	// Horizontal planks at rows 0, 2, 4
+	for _, row := range []int{0, 2, 4} {
+		plankR := woodR + uint8(row*2)
+		for x := 1; x < TileWidth-1; x++ {
+			s[row][x] = SC('═', plankR, woodG, woodB, woodR-20, woodG-15, woodB-10)
+		}
+	}
+
+	// Rail edges at columns 0 and 9
+	for y := 0; y < TileHeight; y++ {
+		s[y][0] = SC('║', railR, railG, railB, railR-20, railG-15, railB-5)
+		s[y][TileWidth-1] = SC('║', railR, railG, railB, railR-20, railG-15, railB-5)
 	}
 
 	return s

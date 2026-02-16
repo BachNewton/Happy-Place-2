@@ -7,7 +7,7 @@ import (
 	"happy-place-2/internal/maps"
 )
 
-const HUDRows = 3
+const HUDRows = 4
 
 // Cell represents a single terminal cell with full RGB color.
 type Cell struct {
@@ -37,6 +37,49 @@ type PlayerInfo struct {
 	DebugView         bool
 	DebugPage         int
 	ActiveInteraction *InteractionPopup
+
+	HP, MaxHP           int
+	Stamina, MaxStamina int
+	MP, MaxMP           int
+	EXP                 int
+	Level               int
+	InCombat            bool
+	CombatTransition    int
+}
+
+// CombatRenderData holds combat state for the renderer.
+type CombatRenderData struct {
+	Phase         int // maps to game.CombatPhase
+	Round         int
+	Enemies       []CombatEnemy
+	Players       []CombatPlayer
+	CurrentTurn   string // player ID whose turn it is
+	TurnTimer     int    // ticks remaining
+	Log           []string
+	ViewerID      string
+	Transitioning bool
+	ViewerAction  int   // selected action (1-3, 0=none)
+	ViewerTarget  int   // selected enemy target index
+}
+
+// CombatEnemy is enemy data for rendering.
+type CombatEnemy struct {
+	Label string
+	HP    int
+	MaxHP int
+	ID    int
+	Alive bool
+}
+
+// CombatPlayer is player data for combat rendering.
+type CombatPlayer struct {
+	ID       string
+	Name     string
+	HP       int
+	MaxHP    int
+	Alive    bool
+	Color    int
+	IsViewer bool
 }
 
 // Engine is a per-session double-buffer diff renderer.
@@ -47,6 +90,7 @@ type Engine struct {
 	firstFrame    bool
 	lastDebugView bool
 	lastDebugPage int
+	lastInCombat  bool
 }
 
 // NewEngine creates a renderer for the given terminal dimensions.
@@ -89,6 +133,7 @@ func (e *Engine) Render(
 	termW, termH int,
 	tick uint64,
 	totalPlayers int,
+	combat *CombatRenderData,
 ) string {
 	if termW != e.width || termH != e.height {
 		e.Resize(termW, termH)
@@ -100,6 +145,10 @@ func (e *Engine) Render(
 	var viewerColor int
 	var viewerDebug bool
 	var viewerDebugPage int
+	var viewerHP, viewerMaxHP int
+	var viewerSTA, viewerMaxSTA int
+	var viewerMP, viewerMaxMP int
+	var viewerEXP, viewerLevel int
 	for _, p := range players {
 		if p.ID == viewerID {
 			viewerX = p.X
@@ -108,6 +157,14 @@ func (e *Engine) Render(
 			viewerColor = p.Color
 			viewerDebug = p.DebugView
 			viewerDebugPage = p.DebugPage
+			viewerHP = p.HP
+			viewerMaxHP = p.MaxHP
+			viewerSTA = p.Stamina
+			viewerMaxSTA = p.MaxStamina
+			viewerMP = p.MP
+			viewerMaxMP = p.MaxMP
+			viewerEXP = p.EXP
+			viewerLevel = p.Level
 			break
 		}
 	}
@@ -121,8 +178,25 @@ func (e *Engine) Render(
 		e.lastDebugPage = viewerDebugPage
 	}
 
+	inCombat := combat != nil
+	if inCombat != e.lastInCombat {
+		e.firstFrame = true
+		e.lastInCombat = inCombat
+	}
+
+	statsInfo := HUDStats{
+		HP: viewerHP, MaxHP: viewerMaxHP,
+		Stamina: viewerSTA, MaxStamina: viewerMaxSTA,
+		MP: viewerMP, MaxMP: viewerMaxMP,
+		EXP: viewerEXP, Level: viewerLevel,
+	}
+
 	if viewerDebug {
 		return e.renderDebugView(viewerColor, viewerDebugPage, tick)
+	}
+
+	if combat != nil {
+		return e.renderCombatView(combat, viewerName, viewerColor, totalPlayers, tick, statsInfo)
 	}
 
 	vp := NewViewport(viewerX, viewerY, termW, termH, tileMap.Width, tileMap.Height, HUDRows)
@@ -200,7 +274,7 @@ func (e *Engine) Render(
 	}
 
 	// Draw HUD
-	e.drawHUD(viewerName, viewerColor, totalPlayers, tileMap.Name)
+	e.drawHUD(viewerName, viewerColor, totalPlayers, tileMap.Name, statsInfo)
 
 	// Diff current vs next, emit only changed cells
 	var sb strings.Builder
@@ -326,89 +400,183 @@ func (e *Engine) drawInteractionPopup(popup *InteractionPopup, vp Viewport, term
 	setCell(popupX+popupW-1, botY, '┘', borderR, borderG, borderB, bgR, bgG, bgB)
 }
 
+// HUDStats holds player stats for HUD display.
+type HUDStats struct {
+	HP, MaxHP           int
+	Stamina, MaxStamina int
+	MP, MaxMP           int
+	EXP                 int
+	Level               int
+}
+
 // --- HUD ---
 
-func (e *Engine) drawHUD(playerName string, playerColor, playerCount int, mapName string) {
+func (e *Engine) drawHUD(playerName string, playerColor, playerCount int, mapName string, stats HUDStats) {
 	hudY := e.height - HUDRows
 	if hudY < 0 {
 		return
 	}
 
-	// Row 1: separator — thin gradient line
+	splitCol := e.width / 2
+	bgR, bgG, bgB := uint8(15), uint8(18), uint8(30)
+
+	// Row 0: separator — thin gradient line
 	for x := 0; x < e.width; x++ {
-		// Gradient from teal to dark
 		t := uint8(60 - x*40/max(e.width, 1))
 		e.next[hudY][x] = Cell{
 			Ch: '━', FgR: 40 + t, FgG: 70 + t, FgB: 90 + t,
-			BgR: 15, BgG: 18, BgB: 28,
+			BgR: bgR, BgG: bgG, BgB: bgB,
 		}
 	}
 
-	// Row 2: info bar
-	barBgR, barBgG, barBgB := uint8(18), uint8(22), uint8(38)
-
-	// Fill bar background
-	for x := 0; x < e.width; x++ {
-		e.next[hudY+1][x] = Cell{Ch: ' ', BgR: barBgR, BgG: barBgG, BgB: barBgB}
+	// Fill rows 1-3 with background and vertical separator
+	for row := 1; row <= 3; row++ {
+		y := hudY + row
+		if y >= e.height {
+			break
+		}
+		for x := 0; x < e.width; x++ {
+			e.next[y][x] = Cell{Ch: ' ', BgR: bgR, BgG: bgG, BgB: bgB}
+		}
+		if splitCol > 0 && splitCol < e.width {
+			e.next[y][splitCol] = Cell{Ch: '│', FgR: 50, FgG: 60, FgB: 80, BgR: bgR, BgG: bgG, BgB: bgB}
+		}
 	}
 
-	// Build info line pieces
+	// --- Left column ---
 	colorIdx := playerColor % len(PlayerBGColors)
 	pR, pG, pB := PlayerBGColors[colorIdx][0], PlayerBGColors[colorIdx][1], PlayerBGColors[colorIdx][2]
-	// Brighten for text use
 	pR = pR + (255-pR)/3
 	pG = pG + (255-pG)/3
 	pB = pB + (255-pB)/3
 
-	infoLine := fmt.Sprintf(" %s  \u2502  %s  \u2502  %d Online", playerName, mapName, playerCount)
-	e.writeHUDStyledLine(hudY+1, infoLine, barBgR, barBgG, barBgB, playerName, pR, pG, pB)
+	// Row 1: world info — player name, map, online count
+	row1 := hudY + 1
+	col := e.writeText(row1, 1, splitCol, playerName, pR, pG, pB, bgR, bgG, bgB, true)
+	col = e.writeText(row1, col, splitCol, "  │  ", 60, 65, 85, bgR, bgG, bgB, false)
+	col = e.writeText(row1, col, splitCol, mapName, 180, 180, 195, bgR, bgG, bgB, false)
+	col = e.writeText(row1, col, splitCol, "  │  ", 60, 65, 85, bgR, bgG, bgB, false)
+	e.writeText(row1, col, splitCol, fmt.Sprintf("%d Online", playerCount), 180, 180, 195, bgR, bgG, bgB, false)
 
-	// Row 3: controls bar
-	ctrlBgR, ctrlBgG, ctrlBgB := uint8(15), uint8(18), uint8(30)
-	for x := 0; x < e.width; x++ {
-		e.next[hudY+2][x] = Cell{Ch: ' ', BgR: ctrlBgR, BgG: ctrlBgG, BgB: ctrlBgB}
+	// Row 2: EXP / Level
+	row2 := hudY + 2
+	lvText := fmt.Sprintf("Lv %d", stats.Level)
+	col = e.writeText(row2, 1, splitCol, lvText, 100, 220, 220, bgR, bgG, bgB, true)
+	col += 2
+	expInLevel := stats.EXP % 50
+	expNums := fmt.Sprintf("%d/%d", expInLevel, 50)
+	expBarWidth := splitCol - col - len("EXP") - 1 - 1 - len(expNums)
+	if expBarWidth < 4 {
+		expBarWidth = 4
 	}
-	controls := " \u2190\u2191\u2193\u2192/WASD Move  \u2502  Q Quit"
-	e.writeHUDTextLine(hudY+2, controls, 130, 130, 145, ctrlBgR, ctrlBgG, ctrlBgB)
+	e.drawStatBar(row2, col, "EXP", expInLevel, 50, expBarWidth,
+		60, 200, 180, 50, 190, 160, bgR, bgG, bgB)
+
+	// Row 3: controls
+	row3 := hudY + 3
+	e.writeText(row3, 1, splitCol, "←↑↓→/WASD Move  │  Q Quit", 130, 130, 145, bgR, bgG, bgB, false)
+
+	// --- Right column: stat bars ---
+	rightStart := splitCol + 2
+	hpNums := fmt.Sprintf("%d/%d", stats.HP, stats.MaxHP)
+	staNums := fmt.Sprintf("%d/%d", stats.Stamina, stats.MaxStamina)
+	mpNums := fmt.Sprintf("%d/%d", stats.MP, stats.MaxMP)
+	maxNumLen := max(len(hpNums), max(len(staNums), len(mpNums)))
+	barWidth := (e.width - rightStart) - 9 - maxNumLen
+	if barWidth < 4 {
+		barWidth = 4
+	}
+
+	hpFillR, hpFillG, hpFillB := hpBarColor(stats.HP, stats.MaxHP)
+	e.drawStatBar(row1, rightStart, "Health ", stats.HP, stats.MaxHP, barWidth,
+		255, 80, 80, hpFillR, hpFillG, hpFillB, bgR, bgG, bgB)
+	e.drawStatBar(row2, rightStart, "Stamina", stats.Stamina, stats.MaxStamina, barWidth,
+		240, 190, 60, 210, 170, 50, bgR, bgG, bgB)
+	e.drawStatBar(row3, rightStart, "Magic  ", stats.MP, stats.MaxMP, barWidth,
+		100, 140, 255, 90, 110, 240, bgR, bgG, bgB)
 }
 
-func (e *Engine) writeHUDStyledLine(row int, text string, bgR, bgG, bgB uint8, highlight string, hR, hG, hB uint8) {
-	if row < 0 || row >= e.height {
-		return
+// hpBarColor returns the fill color for an HP bar based on current/max ratio.
+func hpBarColor(current, maxHP int) (uint8, uint8, uint8) {
+	if maxHP <= 0 {
+		return 80, 80, 90
 	}
-	runes := []rune(text)
-	highlightRunes := []rune(highlight)
-	highlightStart := -1
+	ratio := float64(current) / float64(maxHP)
+	if ratio > 0.5 {
+		return 70, 210, 70
+	} else if ratio > 0.25 {
+		return 220, 200, 40
+	}
+	return 220, 60, 40
+}
 
-	// Find highlight position
-	for i := range runes {
-		match := true
-		for j, hr := range highlightRunes {
-			if i+j >= len(runes) || runes[i+j] != hr {
-				match = false
-				break
-			}
+// drawStatBar draws a labeled stat bar with fill. Returns columns consumed.
+func (e *Engine) drawStatBar(row, col int, label string, current, maximum, barWidth int,
+	labelR, labelG, labelB, fillR, fillG, fillB, bgR, bgG, bgB uint8) int {
+	startCol := col
+
+	// Label
+	for _, r := range label {
+		if col < e.width && row >= 0 && row < e.height {
+			e.next[row][col] = Cell{Ch: r, FgR: labelR, FgG: labelG, FgB: labelB,
+				BgR: bgR, BgG: bgG, BgB: bgB, Bold: true}
 		}
-		if match {
-			highlightStart = i
+		col++
+	}
+	col++ // space
+
+	// Bar
+	filled := 0
+	if maximum > 0 {
+		filled = barWidth * current / maximum
+	}
+	if filled < 0 {
+		filled = 0
+	}
+	if filled > barWidth {
+		filled = barWidth
+	}
+	for i := 0; i < barWidth; i++ {
+		x := col + i
+		if x >= e.width || row < 0 || row >= e.height {
 			break
 		}
-	}
-
-	for x := 0; x < e.width; x++ {
-		if x < len(runes) {
-			fgR, fgG, fgB := uint8(180), uint8(180), uint8(195)
-			bold := false
-			// Highlight player name
-			if highlightStart >= 0 && x >= highlightStart && x < highlightStart+len(highlightRunes) {
-				fgR, fgG, fgB = hR, hG, hB
-				bold = true
-			}
-			e.next[row][x] = Cell{Ch: runes[x], FgR: fgR, FgG: fgG, FgB: fgB, BgR: bgR, BgG: bgG, BgB: bgB, Bold: bold}
+		if i < filled {
+			e.next[row][x] = Cell{Ch: '\u2588', FgR: fillR, FgG: fillG, FgB: fillB,
+				BgR: bgR, BgG: bgG, BgB: bgB}
 		} else {
-			e.next[row][x] = Cell{Ch: ' ', BgR: bgR, BgG: bgG, BgB: bgB}
+			e.next[row][x] = Cell{Ch: '\u2591', FgR: 45, FgG: 45, FgB: 55,
+				BgR: bgR, BgG: bgG, BgB: bgB}
 		}
 	}
+	col += barWidth
+	col++ // space
+
+	// Numbers
+	numText := fmt.Sprintf("%d/%d", current, maximum)
+	for _, r := range numText {
+		if col < e.width && row >= 0 && row < e.height {
+			e.next[row][col] = Cell{Ch: r, FgR: 180, FgG: 180, FgB: 195,
+				BgR: bgR, BgG: bgG, BgB: bgB}
+		}
+		col++
+	}
+
+	return col - startCol
+}
+
+// writeText writes colored text into a bounded region [col, maxCol). Returns the next column position.
+func (e *Engine) writeText(row, col, maxCol int, text string, fgR, fgG, fgB, bgR, bgG, bgB uint8, bold bool) int {
+	for _, r := range text {
+		if col >= maxCol || col >= e.width {
+			break
+		}
+		if row >= 0 && row < e.height && col >= 0 {
+			e.next[row][col] = Cell{Ch: r, FgR: fgR, FgG: fgG, FgB: fgB, BgR: bgR, BgG: bgG, BgB: bgB, Bold: bold}
+		}
+		col++
+	}
+	return col
 }
 
 func (e *Engine) writeHUDTextLine(row int, text string, fgR, fgG, fgB, bgR, bgG, bgB uint8) {

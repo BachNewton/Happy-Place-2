@@ -2,13 +2,22 @@
 
 ## Overview
 
-The game currently uses handcrafted JSON maps (`assets/maps/`). Procedural generation would add a CLI tool (`cmd/mapgen/`) that outputs maps in the same JSON format. Handcrafted and generated maps coexist — `LoadMaps()` doesn't care how a JSON file was created.
+The game uses handcrafted JSON maps (`assets/maps/`) alongside procedurally generated ones. The CLI tool `cmd/mapgen/` outputs maps in the same JSON format — `LoadMaps()` doesn't care how a JSON file was created.
 
-## Workflow
+## Usage
 
-```
+```bash
 go run ./cmd/mapgen/ -type wilderness -seed 42 -size 100x80 -name "Wild Plains" -out assets/maps/wild_plains.json
 ```
+
+**Flags:**
+- `-type` — generator type (required; currently: `wilderness`)
+- `-seed` — random seed, 0 = random (default `0`)
+- `-size` — map dimensions as `WxH` (default `100x80`, minimum `10x10`)
+- `-name` — map display name (default `Wilderness`)
+- `-out` — output file path (default: stdout)
+
+## Workflow
 
 1. Run the generator with a seed, type, size, and name
 2. Validate with `go run ./cmd/maptools/ validate assets/maps/`
@@ -23,33 +32,60 @@ The seed is deterministic — same seed always produces the same map. Record it 
 Generated maps use the exact same JSON format as handcrafted maps:
 - `[][]int` tile grid with legend
 - Spawn point
-- Portal list for map connections
+- Portal list (empty by default — add by hand)
 
 No changes needed to the server, renderer, game loop, or map loader. The generator is a standalone offline tool.
 
-## Map Types
+## Implemented: Wilderness
 
-### Wilderness (simplex noise)
+The wilderness generator layers three simplex noise fields to create natural terrain with 12 tile types.
 
-The most broadly useful generator. Layers two 2D noise fields to create natural terrain.
+**Noise fields:**
+- **Elevation** — freq 0.02, 4 octaves (landforms)
+- **Moisture** — freq 0.03, 3 octaves (biome selection)
+- **Detail** — freq 0.1, 2 octaves (sparse/dense variation)
 
-**Algorithm:**
-- **Elevation noise**: Multiple octaves of simplex noise
-- **Moisture noise**: Separate simplex noise field at different frequency
+**Tile mapping by elevation bands:**
 
-**Tile mapping:**
-| Elevation | Moisture | Tile |
-|-----------|----------|------|
-| Very low | Any | Water |
-| Low | High | Flowers / marsh |
-| Low | Low | Grass plains |
-| Medium | High | Dense forest |
-| Medium | Low | Sparse trees + grass |
-| High | Any | Mountain walls |
+| Elevation | Condition | Tile |
+|-----------|-----------|------|
+| < 0.20 | — | water |
+| 0.20–0.28 | — | shallow_water |
+| 0.28–0.32 | — | sand |
+| 0.32–0.42 | moisture > 0.6 | flowers |
+| 0.32–0.42 | moisture > 0.45 | tall_grass |
+| 0.32–0.42 | else | grass |
+| 0.42–0.70 | moisture > 0.55 | tree (dense forest) |
+| 0.42–0.70 | moisture > 0.35 | tree/tall_grass/grass mix via detail noise |
+| 0.42–0.70 | else | grass |
+| 0.70–0.78 | — | rock |
+| >= 0.78 | — | wall (mountain peaks) |
 
-**Why it would look good:** Simplex noise produces organic, flowing shapes — natural-looking rivers, forest edges, and mountain ridges. The existing sprite system already has variants (4 grass types, 4 tree types), animation (grass sway, water ripple), and rich color, so the terrain would feel alive without any extra work.
+**Post-processing:**
+- **Trail carving**: Random walk from spawn toward 2–3 edge points. Places path tiles along the walk, dirt alongside on grass/tall_grass, bridge where crossing water/shallow_water.
+- **Edge treatment**: Outermost ring forced impassable (trees or wall by elevation). Border zone (3 tiles deep) uses noise-shaped boundary converting walkable tiles to trees/rock.
+- **Spawn selection**: Spirals outward from map center, finds grass/path tile with mostly-walkable 3×3 neighborhood (7+ of 9 tiles walkable).
 
-**Potential new tiles:** Sand (beaches/shores), shallow water (walkable), rock (visual variant of wall for mountains).
+**Typical distribution** (100x80, seed 42): ~33% grass+tall_grass, ~33% tree, ~13% water+shallow_water, ~9% rock+wall, ~5% sand, ~5% flowers, ~2% path/dirt/bridge.
+
+**Legend — 12 tile types:**
+
+| Idx | Name | Char | Color | Walk | Notes |
+|-----|------|------|-------|------|-------|
+| 0 | grass | `.` | green | yes | Matches existing |
+| 1 | water | `~` | blue | no | Matches existing |
+| 2 | tree | `T` | green | no | Matches existing |
+| 3 | wall | `#` | gray | no | Matches existing |
+| 4 | flowers | `*` | bright_red | yes | Matches existing |
+| 5 | path | `.` | yellow | yes | Matches existing |
+| 6 | sand | `~` | yellow | yes | New — beach shores |
+| 7 | tall_grass | `;` | bright_green | yes | New — meadows |
+| 8 | rock | `▒` | gray | no | New — mountain outcrops |
+| 9 | shallow_water | `~` | cyan | yes | New — wading areas |
+| 10 | dirt | `.` | yellow | yes | New — trail borders |
+| 11 | bridge | `=` | yellow | yes | New — river crossings |
+
+## Future Map Types
 
 ### Caves (cellular automata)
 
@@ -97,68 +133,48 @@ Classic roguelike cave generation.
 
 **Why it would look good:** Buildings would use connected wall sprites with proper mortar patterns. Doors, floors, fences — all existing tile types. Paths winding between buildings through grassy terrain with trees gives a natural village feel.
 
-## Technical Approach
+## Technical Details
 
-### Simplex Noise
+### Simplex Noise (`cmd/mapgen/noise.go`)
 
-Simplex noise in Go is ~100 lines — no external dependencies needed. It produces smooth, continuous 2D noise perfect for terrain generation.
+Self-contained 2D simplex noise implementation (~110 lines, only imports `math` and `math/rand`):
+- `SimplexNoise` struct with seed-shuffled permutation table
+- `Noise2D(x, y)` — core 2D simplex noise, returns [-1, 1]
+- `Fractal(x, y, freq, octaves, lacunarity, persistence)` — multi-octave noise normalized to [0, 1]
 
 Key parameters:
 - **Frequency**: Controls feature size. Low frequency = large rolling hills, high frequency = small scattered details.
 - **Octaves**: Layer multiple noise passes at increasing frequency for natural fractal detail.
-- **Lacunarity**: How much frequency increases per octave (typically 2.0).
-- **Persistence**: How much amplitude decreases per octave (typically 0.5).
+- **Lacunarity**: How much frequency increases per octave (2.0).
+- **Persistence**: How much amplitude decreases per octave (0.5).
 
 ### Map Sizes
 
-Current handcrafted maps are 60x30. Procgen enables much larger maps since there's no manual labor cost:
-- **60x30**: Same as current (quick test maps)
-- **100x80**: Medium exploration area
+Handcrafted maps are 60x30. Procgen enables much larger maps:
+- **60x30**: Quick test maps
+- **100x80**: Medium exploration area (default)
 - **200x150**: Large wilderness zone
 - **300x200**: Epic scale
 
 The viewport and renderer already handle any map size — they only draw visible tiles.
 
-### Spawn Point Selection
-
-The generator needs to pick a valid spawn point:
-- Must be on a walkable tile
-- Should be in an interesting location (near the center, on a path, in a clearing)
-- For wilderness: find a grass clearing near map center
-- For caves: spawn in the largest chamber
-- For islands: spawn near the center of the landmass
-
 ### Portal Placement
 
-Portals are **not** auto-generated. After generating a map, you hand-add portals to connect it to the world:
-- Add portal tiles on the new map's edge
+Portals are **not** auto-generated. After generating a map, hand-add portals to connect it to the world:
+- Add portal entries to the generated JSON
 - Add matching portal tiles on the connecting map (e.g., Town Square)
 - This keeps world topology intentional and hand-designed
 
-## Possible New Tile Types
-
-These would enhance procgen maps but aren't strictly required for a first version:
-
-| Tile | Char | Color | Walkable | Use |
-|------|------|-------|----------|-----|
-| Sand | `~` | yellow | yes | Beach shores, desert |
-| Shallow water | `~` | cyan | yes | Wading areas near shores |
-| Rock | `▒` | gray | no | Mountains (visual variant of wall) |
-| Tall grass | `;` | bright_green | yes | Meadows, plains |
-| Bridge | `=` | yellow | yes | River crossings |
-| Dirt | `.` | brown | yes | Transition between grass and path |
-
-## What Makes Procgen Maps Feel Good vs. Bad
-
-**Common pitfalls to avoid:**
-- **Uniformity**: Fixed by the variant system — 4 grass variants, 4 tree variants, etc.
-- **Noise soup**: Threshold noise into distinct tile types rather than gradients
-- **Inaccessible areas**: Flood-fill check that spawn connects to most of the map
-- **Boring edges**: Border the map with impassable tiles (trees, walls, water) but don't make it a uniform rectangle — use noise for the boundary shape too
-- **No focal points**: Even wilderness needs points of interest — a lake, a clearing, a flower meadow, a mountain peak
+## Design Notes
 
 **What the existing system gives us for free:**
 - Tile variants via `TileHash` → visual variety without any procgen effort
-- Animated tiles (grass, water) → maps feel alive
+- Animated tiles (grass, water, sand, tall_grass, shallow_water) → maps feel alive
 - Connected tiles (fence) → auto-adapt to neighbors
 - Rich pixel-art sprites at 10x5 per tile → surprisingly detailed for a terminal game
+
+**Pitfalls avoided:**
+- **Uniformity**: Fixed by the variant system — 4 grass variants, 4 tree variants, etc.
+- **Noise soup**: Noise is thresholded into distinct tile types, not used as gradients
+- **Boring edges**: Border uses noise-shaped boundary, not a uniform rectangle
+- **No focal points**: Elevation bands create natural features — lakes, clearings, flower meadows, mountain ridges
