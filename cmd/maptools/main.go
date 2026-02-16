@@ -107,8 +107,19 @@ func runValidate(dir string) int {
 			}
 		}
 
+		// Check interaction positions
+		for _, inter := range m.Interactions {
+			if inter.X < 0 || inter.X >= m.Width || inter.Y < 0 || inter.Y >= m.Height {
+				fmt.Printf("  ERROR: interaction at (%d,%d) is out of bounds\n", inter.X, inter.Y)
+				errors++
+			}
+			if inter.Text == "" {
+				fmt.Printf("  WARN: interaction at (%d,%d) has empty text\n", inter.X, inter.Y)
+			}
+		}
+
 		if errors == 0 {
-			fmt.Printf("  OK (%dx%d, %d portals)\n", m.Width, m.Height, len(m.Portals))
+			fmt.Printf("  OK (%dx%d, %d portals, %d interactions)\n", m.Width, m.Height, len(m.Portals), len(m.Interactions))
 		}
 	}
 
@@ -144,10 +155,13 @@ func runViz(path string) {
 		fmt.Println()
 	}
 
-	// Mark spawn and portals in legend
+	// Mark spawn, portals, and interactions
 	fmt.Printf("\nSpawn: (%d,%d)\n", m.SpawnX, m.SpawnY)
 	for _, p := range m.Portals {
 		fmt.Printf("Portal: (%d,%d) → %s (%d,%d)\n", p.X, p.Y, p.TargetMap, p.TargetX, p.TargetY)
+	}
+	for _, inter := range m.Interactions {
+		fmt.Printf("Interaction: (%d,%d) [%s] %q\n", inter.X, inter.Y, inter.Type, inter.Text)
 	}
 }
 
@@ -199,8 +213,9 @@ func runStats(path string) {
 		fmt.Printf("  %-10s %4d (%5.1f%%) %s\n", e.name, e.count, pct, bar)
 	}
 
-	fmt.Printf("\nWalkable: %d/%d (%.1f%%)\n", walkable, total, float64(walkable)/float64(total)*100)
-	fmt.Printf("Portals:  %d\n", len(m.Portals))
+	fmt.Printf("\nWalkable:      %d/%d (%.1f%%)\n", walkable, total, float64(walkable)/float64(total)*100)
+	fmt.Printf("Portals:       %d\n", len(m.Portals))
+	fmt.Printf("Interactions:  %d\n", len(m.Interactions))
 }
 
 // --- all ---

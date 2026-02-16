@@ -37,6 +37,15 @@ func (w *World) PortalAt(mapName string, x, y int) *maps.Portal {
 	return m.PortalAt(x, y)
 }
 
+// InteractionAt returns the interaction at the given position on the named map, or nil.
+func (w *World) InteractionAt(mapName string, x, y int) *maps.Interaction {
+	m, ok := w.Maps[mapName]
+	if !ok {
+		return nil
+	}
+	return m.InteractionAt(x, y)
+}
+
 // GetMap returns the map with the given name, or nil.
 func (w *World) GetMap(name string) *maps.Map {
 	return w.Maps[name]

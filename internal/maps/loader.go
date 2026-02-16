@@ -52,6 +52,13 @@ type Portal struct {
 	TargetX, TargetY  int
 }
 
+// Interaction defines a world object the player can interact with by facing it.
+type Interaction struct {
+	X, Y int
+	Type string
+	Text string
+}
+
 // Spawn defines the spawn point coordinates.
 type Spawn struct {
 	X int `json:"x"`
@@ -60,26 +67,36 @@ type Spawn struct {
 
 // Map represents a loaded tile map.
 type Map struct {
-	Name      string
-	Width     int
-	Height    int
-	SpawnX    int
-	SpawnY    int
-	Tiles     [][]int   // [y][x] tile indices
-	Legend    []TileDef // index → tile definition
-	Portals   []Portal
-	portalIdx map[[2]int]*Portal // built at load time for O(1) lookup
+	Name           string
+	Width          int
+	Height         int
+	SpawnX         int
+	SpawnY         int
+	Tiles          [][]int   // [y][x] tile indices
+	Legend         []TileDef // index → tile definition
+	Portals        []Portal
+	portalIdx      map[[2]int]*Portal      // built at load time for O(1) lookup
+	Interactions   []Interaction
+	interactionIdx map[[2]int]*Interaction // built at load time for O(1) lookup
 }
 
 // jsonMap is the on-disk JSON format.
 type jsonMap struct {
-	Name    string             `json:"name"`
-	Width   int                `json:"width"`
-	Height  int                `json:"height"`
-	Spawn   Spawn              `json:"spawn"`
-	Tiles   [][]int            `json:"tiles"`
-	Legend  map[string]jsonTile `json:"legend"`
-	Portals []jsonPortal        `json:"portals,omitempty"`
+	Name         string             `json:"name"`
+	Width        int                `json:"width"`
+	Height       int                `json:"height"`
+	Spawn        Spawn              `json:"spawn"`
+	Tiles        [][]int            `json:"tiles"`
+	Legend       map[string]jsonTile `json:"legend"`
+	Portals      []jsonPortal        `json:"portals,omitempty"`
+	Interactions []jsonInteraction   `json:"interactions,omitempty"`
+}
+
+type jsonInteraction struct {
+	X    int    `json:"x"`
+	Y    int    `json:"y"`
+	Type string `json:"type"`
+	Text string `json:"text"`
 }
 
 type jsonPortal struct {
@@ -156,17 +173,28 @@ func LoadMap(path string) (*Map, error) {
 		}
 	}
 
+	interactions := make([]Interaction, len(jm.Interactions))
+	for i, ji := range jm.Interactions {
+		interactions[i] = Interaction{
+			X: ji.X, Y: ji.Y,
+			Type: ji.Type,
+			Text: ji.Text,
+		}
+	}
+
 	m := &Map{
-		Name:    jm.Name,
-		Width:   jm.Width,
-		Height:  jm.Height,
-		SpawnX:  jm.Spawn.X,
-		SpawnY:  jm.Spawn.Y,
-		Tiles:   jm.Tiles,
-		Legend:  legend,
-		Portals: portals,
+		Name:         jm.Name,
+		Width:        jm.Width,
+		Height:       jm.Height,
+		SpawnX:       jm.Spawn.X,
+		SpawnY:       jm.Spawn.Y,
+		Tiles:        jm.Tiles,
+		Legend:       legend,
+		Portals:      portals,
+		Interactions: interactions,
 	}
 	m.buildPortalIndex()
+	m.buildInteractionIndex()
 	return m, nil
 }
 
@@ -199,6 +227,19 @@ func (m *Map) buildPortalIndex() {
 // PortalAt returns the portal at the given coordinates, or nil if none.
 func (m *Map) PortalAt(x, y int) *Portal {
 	return m.portalIdx[[2]int{x, y}]
+}
+
+// buildInteractionIndex populates the O(1) interaction lookup map.
+func (m *Map) buildInteractionIndex() {
+	m.interactionIdx = make(map[[2]int]*Interaction, len(m.Interactions))
+	for i := range m.Interactions {
+		m.interactionIdx[[2]int{m.Interactions[i].X, m.Interactions[i].Y}] = &m.Interactions[i]
+	}
+}
+
+// InteractionAt returns the interaction at the given coordinates, or nil if none.
+func (m *Map) InteractionAt(x, y int) *Interaction {
+	return m.interactionIdx[[2]int{x, y}]
 }
 
 // LoadMaps scans a directory for *.json files, loads each as a Map,

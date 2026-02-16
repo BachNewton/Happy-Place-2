@@ -52,5 +52,11 @@
     {"x": 59, "y": 15, "target_map": "Forest", "target_x": 1, "target_y": 15},
     {"x": 59, "y": 16, "target_map": "Forest", "target_x": 1, "target_y": 16},
     {"x": 59, "y": 17, "target_map": "Forest", "target_x": 1, "target_y": 17}
+  ],
+  "interactions": [
+    {"x": 9,  "y": 7,  "type": "sign", "text": "General Store"},
+    {"x": 25, "y": 8,  "type": "sign", "text": "Town Hall"},
+    {"x": 5,  "y": 25, "type": "sign", "text": "The Rusty Anchor"},
+    {"x": 47, "y": 23, "type": "sign", "text": "Healer's Hut"}
   ]
 }

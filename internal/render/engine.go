@@ -19,17 +19,24 @@ type Cell struct {
 
 var sentinel = Cell{Ch: '\x00', FgR: 255, BgB: 255, Bold: true}
 
+// InteractionPopup is the data needed to render an interaction popup.
+type InteractionPopup struct {
+	WorldX, WorldY int
+	Text           string
+}
+
 // PlayerInfo is the minimal player data the renderer needs.
 type PlayerInfo struct {
-	ID        string
-	Name      string
-	X, Y      int
-	Color     int // index into PlayerBGColors
-	Dir       int // 0=down, 1=up, 2=left, 3=right
-	Anim      int // 0=idle, 1=walking
-	AnimFrame int // current animation frame
-	DebugView bool
-	DebugPage int
+	ID                string
+	Name              string
+	X, Y              int
+	Color             int // index into PlayerBGColors
+	Dir               int // 0=down, 1=up, 2=left, 3=right
+	Anim              int // 0=idle, 1=walking
+	AnimFrame         int // current animation frame
+	DebugView         bool
+	DebugPage         int
+	ActiveInteraction *InteractionPopup
 }
 
 // Engine is a per-session double-buffer diff renderer.
@@ -129,25 +136,41 @@ func (e *Engine) Render(
 	}
 
 	// Fill world tiles — each tile is TileWidth x TileHeight screen cells
+	signSprite := SignSprite()
 	for ty := 0; ty < vp.ViewH; ty++ {
 		for tx := 0; tx < vp.ViewW; tx++ {
 			wx := vp.CamX + tx
 			wy := vp.CamY + ty
 			tile := tileMap.TileAt(wx, wy)
 			sprite := TileSprite(tile, wx, wy, tick, tileMap)
-			e.stampSprite(vp.OffsetX+tx*TileWidth, vp.OffsetY+ty*TileHeight, sprite, false)
+			sx := vp.OffsetX + tx*TileWidth
+			sy := vp.OffsetY + ty*TileHeight
+			e.stampSprite(sx, sy, sprite, false)
+			// Overlay sign sprite on interaction tiles
+			if tileMap.InteractionAt(wx, wy) != nil {
+				e.stampSprite(sx, sy, signSprite, true)
+			}
 		}
 	}
 
 	// Overlay players
+	var viewerPopup *InteractionPopup
 	for _, p := range players {
 		sx, sy := vp.WorldToScreen(p.X, p.Y)
 		if sx+TileWidth <= 0 || sx >= termW || sy+TileHeight <= 0 || sy >= (termH-HUDRows) {
 			continue
 		}
 		isSelf := p.ID == viewerID
+		if isSelf && p.ActiveInteraction != nil {
+			viewerPopup = p.ActiveInteraction
+		}
 		sprite := PlayerSprite(p.Dir, p.Anim, p.AnimFrame, p.Color, isSelf, p.Name)
 		e.stampSprite(sx, sy, sprite, true)
+	}
+
+	// Draw interaction popup above sign tile
+	if viewerPopup != nil {
+		e.drawInteractionPopup(viewerPopup, vp, termH)
 	}
 
 	// Draw HUD
@@ -204,6 +227,77 @@ func (e *Engine) stampSprite(sx, sy int, sprite Sprite, transparent bool) {
 			e.next[screenY][screenX] = sc.Cell
 		}
 	}
+}
+
+// --- Interaction Popup ---
+
+func (e *Engine) drawInteractionPopup(popup *InteractionPopup, vp Viewport, termH int) {
+	signSX, signSY := vp.WorldToScreen(popup.WorldX, popup.WorldY)
+
+	textRunes := []rune(popup.Text)
+	popupW := len(textRunes) + 4 // "│ " + text + " │"
+	popupH := 3                  // top border, text, bottom border
+
+	// Horizontal: center on sign tile, clamp to screen
+	popupX := signSX + (TileWidth-popupW)/2
+	if popupX < 0 {
+		popupX = 0
+	}
+	if popupX+popupW > e.width {
+		popupX = e.width - popupW
+	}
+
+	hudTop := termH - HUDRows
+
+	// Vertical: prefer above the sign tile
+	popupY := signSY - popupH
+	if popupY < 0 {
+		// Not enough room above — try below
+		popupY = signSY + TileHeight
+	}
+	// If popup overlaps HUD, try above instead; if still no room, skip
+	if popupY+popupH > hudTop {
+		popupY = signSY - popupH
+		if popupY < 0 {
+			return
+		}
+	}
+
+	// Colors: warm border, dark bg, light text
+	borderR, borderG, borderB := uint8(200), uint8(180), uint8(120)
+	bgR, bgG, bgB := uint8(30), uint8(25), uint8(45)
+	textR, textG, textB := uint8(240), uint8(230), uint8(200)
+
+	setCell := func(sx, sy int, ch rune, fgR, fgG, fgB, bgR, bgG, bgB uint8) {
+		if sx >= 0 && sx < e.width && sy >= 0 && sy < e.height {
+			e.next[sy][sx] = Cell{Ch: ch, FgR: fgR, FgG: fgG, FgB: fgB, BgR: bgR, BgG: bgG, BgB: bgB}
+		}
+	}
+
+	// Top border: ┌──...──┐
+	setCell(popupX, popupY, '┌', borderR, borderG, borderB, bgR, bgG, bgB)
+	for i := 1; i < popupW-1; i++ {
+		setCell(popupX+i, popupY, '─', borderR, borderG, borderB, bgR, bgG, bgB)
+	}
+	setCell(popupX+popupW-1, popupY, '┐', borderR, borderG, borderB, bgR, bgG, bgB)
+
+	// Middle row: │ text │
+	midY := popupY + 1
+	setCell(popupX, midY, '│', borderR, borderG, borderB, bgR, bgG, bgB)
+	setCell(popupX+1, midY, ' ', textR, textG, textB, bgR, bgG, bgB)
+	for i, r := range textRunes {
+		setCell(popupX+2+i, midY, r, textR, textG, textB, bgR, bgG, bgB)
+	}
+	setCell(popupX+popupW-2, midY, ' ', textR, textG, textB, bgR, bgG, bgB)
+	setCell(popupX+popupW-1, midY, '│', borderR, borderG, borderB, bgR, bgG, bgB)
+
+	// Bottom border: └──...──┘
+	botY := popupY + 2
+	setCell(popupX, botY, '└', borderR, borderG, borderB, bgR, bgG, bgB)
+	for i := 1; i < popupW-1; i++ {
+		setCell(popupX+i, botY, '─', borderR, borderG, borderB, bgR, bgG, bgB)
+	}
+	setCell(popupX+popupW-1, botY, '┘', borderR, borderG, borderB, bgR, bgG, bgB)
 }
 
 // --- HUD ---

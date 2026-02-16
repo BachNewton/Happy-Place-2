@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	listenAddr  = ":2222"
+	defaultAddr = ":2222"
 	hostKeyPath = "host_key"
 	mapsDir     = "assets/maps"
 	defaultMap  = "Town Square"
@@ -49,8 +49,12 @@ func main() {
 	defer gameLoop.Stop()
 
 	// Start SSH server (blocks)
+	listenAddr := defaultAddr
+	if port := os.Getenv("PORT"); port != "" {
+		listenAddr = ":" + port
+	}
 	sshServer := server.NewSSHServer(listenAddr, hostKeyPath, gameLoop)
-	log.Printf("Starting Happy Place 2 — connect with: ssh -p 2222 YourName@localhost")
+	log.Printf("Starting Happy Place 2 — connect with: ssh -p %s YourName@localhost", listenAddr[1:])
 	if err := sshServer.Start(); err != nil {
 		log.Fatalf("SSH server error: %v", err)
 	}

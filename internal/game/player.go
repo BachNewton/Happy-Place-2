@@ -34,6 +34,12 @@ const (
 	AnimWalking
 )
 
+// ActiveInteraction represents a currently triggered interaction popup.
+type ActiveInteraction struct {
+	WorldX, WorldY int
+	Text           string
+}
+
 // InputEvent carries a player action into the game loop.
 type InputEvent struct {
 	PlayerID string
@@ -53,39 +59,42 @@ type Player struct {
 	AnimFrame    int // current frame index
 	AnimTimer    int // ticks remaining in walk state
 	AnimTick     int // ticks since last frame advance
-	MoveCooldown int // ticks until next move allowed
-	DebugView    bool
-	DebugPage    int
+	MoveCooldown      int // ticks until next move allowed
+	DebugView         bool
+	DebugPage         int
+	ActiveInteraction *ActiveInteraction
 }
 
 // PlayerSnapshot is a read-only copy of player state for rendering.
 type PlayerSnapshot struct {
-	ID        string
-	Name      string
-	X, Y      int
-	Color     int
-	MapName   string
-	Dir       Direction
-	Anim      AnimState
-	AnimFrame int
-	DebugView bool
-	DebugPage int
+	ID                string
+	Name              string
+	X, Y              int
+	Color             int
+	MapName           string
+	Dir               Direction
+	Anim              AnimState
+	AnimFrame         int
+	DebugView         bool
+	DebugPage         int
+	ActiveInteraction *ActiveInteraction
 }
 
 // Snapshot returns a read-only copy of the player.
 func (p *Player) Snapshot() PlayerSnapshot {
 	return PlayerSnapshot{
-		ID:        p.ID,
-		Name:      p.Name,
-		X:         p.X,
-		Y:         p.Y,
-		Color:     p.Color,
-		MapName:   p.MapName,
-		Dir:       p.Dir,
-		Anim:      p.Anim,
-		AnimFrame: p.AnimFrame,
-		DebugView: p.DebugView,
-		DebugPage: p.DebugPage,
+		ID:                p.ID,
+		Name:              p.Name,
+		X:                 p.X,
+		Y:                 p.Y,
+		Color:             p.Color,
+		MapName:           p.MapName,
+		Dir:               p.Dir,
+		Anim:              p.Anim,
+		AnimFrame:         p.AnimFrame,
+		DebugView:         p.DebugView,
+		DebugPage:         p.DebugPage,
+		ActiveInteraction: p.ActiveInteraction,
 	}
 }
 

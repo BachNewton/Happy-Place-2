@@ -511,3 +511,57 @@ func min8(a, b uint8) uint8 {
 	}
 	return b
 }
+
+// --- Sign overlay ---
+
+// SignSprite returns a sprite overlay for a sign mounted on a wall.
+// Transparent cells let the wall show through.
+func SignSprite() Sprite {
+	T := TransparentCell
+
+	// Colors
+	boardR, boardG, boardB := uint8(140), uint8(100), uint8(50)
+	edgeR, edgeG, edgeB := boardR - 30, boardG - 25, boardB - 15
+	bracketR, bracketG, bracketB := uint8(90), uint8(75), uint8(55)
+	wallBgR, wallBgG, wallBgB := uint8(100), uint8(100), uint8(110) // wall stone color for bracket bg
+	textR, textG, textB := uint8(200), uint8(180), uint8(120)
+
+	var s Sprite
+	for y := 0; y < TileHeight; y++ {
+		for x := 0; x < TileWidth; x++ {
+			s[y][x] = T()
+		}
+	}
+
+	// Row 0: bracket hooks into wall (centered)
+	s[0][4] = SC('|', bracketR, bracketG, bracketB, wallBgR, wallBgG, wallBgB)
+	s[0][5] = SC('|', bracketR, bracketG, bracketB, wallBgR, wallBgG, wallBgB)
+
+	// Row 1: top edge ┌──────┐ (cols 1..8)
+	s[1][1] = SC('┌', boardR, boardG, boardB, edgeR, edgeG, edgeB)
+	for x := 2; x <= 7; x++ {
+		s[1][x] = SC('─', boardR, boardG, boardB, edgeR, edgeG, edgeB)
+	}
+	s[1][8] = SC('┐', boardR, boardG, boardB, edgeR, edgeG, edgeB)
+
+	// Row 2: sign face │ ≡≡≡≡ │ (illegible text lines)
+	s[2][1] = SC('│', boardR, boardG, boardB, edgeR, edgeG, edgeB)
+	s[2][2] = SC(' ', textR, textG, textB, edgeR, edgeG, edgeB)
+	s[2][3] = SC('≡', textR, textG, textB, edgeR, edgeG, edgeB)
+	s[2][4] = SC('≡', textR, textG, textB, edgeR, edgeG, edgeB)
+	s[2][5] = SC('≡', textR, textG, textB, edgeR, edgeG, edgeB)
+	s[2][6] = SC('≡', textR, textG, textB, edgeR, edgeG, edgeB)
+	s[2][7] = SC(' ', textR, textG, textB, edgeR, edgeG, edgeB)
+	s[2][8] = SC('│', boardR, boardG, boardB, edgeR, edgeG, edgeB)
+
+	// Row 3: bottom edge └──────┘ (cols 1..8)
+	s[3][1] = SC('└', boardR, boardG, boardB, edgeR, edgeG, edgeB)
+	for x := 2; x <= 7; x++ {
+		s[3][x] = SC('─', boardR, boardG, boardB, edgeR, edgeG, edgeB)
+	}
+	s[3][8] = SC('┘', boardR, boardG, boardB, edgeR, edgeG, edgeB)
+
+	// Row 4: transparent (wall shows through)
+
+	return s
+}

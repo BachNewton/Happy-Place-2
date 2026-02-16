@@ -139,7 +139,7 @@ func (s *SSHServer) handleSession(sess ssh.Session) {
 			// Convert game snapshots to render player info
 			players := make([]render.PlayerInfo, len(state.Map.Players))
 			for i, p := range state.Map.Players {
-				players[i] = render.PlayerInfo{
+				pi := render.PlayerInfo{
 					ID:        p.ID,
 					Name:      p.Name,
 					X:         p.X,
@@ -151,6 +151,14 @@ func (s *SSHServer) handleSession(sess ssh.Session) {
 					DebugView: p.DebugView,
 					DebugPage: p.DebugPage,
 				}
+				if p.ID == playerID && p.ActiveInteraction != nil {
+					pi.ActiveInteraction = &render.InteractionPopup{
+						WorldX: p.ActiveInteraction.WorldX,
+						WorldY: p.ActiveInteraction.WorldY,
+						Text:   p.ActiveInteraction.Text,
+					}
+				}
+				players[i] = pi
 			}
 
 			output := engine.Render(playerID, state.Map.Map, players, w, h, state.World.Tick, state.World.TotalPlayers)

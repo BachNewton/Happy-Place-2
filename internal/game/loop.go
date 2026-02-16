@@ -167,10 +167,11 @@ drained:
 
 	gl.tickCount++
 
-	// Update animations for all players
+	// Update animations and interactions for all players
 	gl.mu.RLock()
 	for _, p := range gl.players {
 		updatePlayerAnimation(p)
+		p.ActiveInteraction = gl.computeInteraction(p)
 	}
 	gl.mu.RUnlock()
 
@@ -237,6 +238,26 @@ func updatePlayerAnimation(p *Player) {
 			p.AnimTick = 0
 		}
 	}
+}
+
+// computeInteraction checks if the player is facing an interaction tile.
+func (gl *GameLoop) computeInteraction(p *Player) *ActiveInteraction {
+	fx, fy := p.X, p.Y
+	switch p.Dir {
+	case DirUp:
+		fy--
+	case DirDown:
+		fy++
+	case DirLeft:
+		fx--
+	case DirRight:
+		fx++
+	}
+	inter := gl.world.InteractionAt(p.MapName, fx, fy)
+	if inter == nil {
+		return nil
+	}
+	return &ActiveInteraction{WorldX: inter.X, WorldY: inter.Y, Text: inter.Text}
 }
 
 func (gl *GameLoop) processInput(ev InputEvent) {
