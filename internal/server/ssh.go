@@ -245,8 +245,10 @@ func parseInput(data []byte) []game.Action {
 			actions = append(actions, game.ActionRight)
 		case 'q', 'Q':
 			actions = append(actions, game.ActionQuit)
-		case '`', '~':
+		case '`':
 			actions = append(actions, game.ActionDebug)
+		case '~':
+			actions = append(actions, game.ActionDebugCombat)
 		case '1':
 			actions = append(actions, game.ActionDebugPage1)
 		case '2':

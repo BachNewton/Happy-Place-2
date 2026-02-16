@@ -16,6 +16,7 @@ const (
 	ActionDebugPage3
 	ActionConfirm
 	ActionDefend
+	ActionDebugCombat
 )
 
 // Direction the player is facing.

@@ -307,6 +307,14 @@ func (gl *GameLoop) processInput(ev InputEvent) {
 		return
 	}
 
+	// Debug: force-start combat encounter from anywhere
+	if ev.Action == ActionDebugCombat {
+		if player.FightID == 0 && !player.Dead {
+			gl.startEncounter(player)
+		}
+		return
+	}
+
 	// Debug page navigation (only when debug view is open)
 	if player.DebugView {
 		const debugPageCount = 3
