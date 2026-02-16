@@ -49,45 +49,70 @@ func (e *Engine) renderCombatView(combat *CombatRenderData, viewerName string, v
 		}
 	}
 
-	// Layout: enemies at top, separator, players, log, combat HUD at bottom
+	hudY := e.height - HUDRows
+	bR, bG, bB := uint8(100), uint8(70), uint8(55) // border color
+
+	// ┌─────────────────────────┐  top border
+	e.drawBoxRow(0, '┌', '─', '┐', bR, bG, bB, bgR, bgG, bgB)
+
+	// │ side borders on all content rows
+	for y := 1; y < hudY; y++ {
+		if y >= 0 && y < e.height {
+			e.next[y][0] = Cell{Ch: '│', FgR: bR, FgG: bG, FgB: bB, BgR: bgR, BgG: bgG, BgB: bgB}
+			if e.width > 1 {
+				e.next[y][e.width-1] = Cell{Ch: '│', FgR: bR, FgG: bG, FgB: bB, BgR: bgR, BgG: bgG, BgB: bgB}
+			}
+		}
+	}
+
 	curY := 1
 
 	// --- Enemy area ---
+	livingIdx := 0
+	isViewerTurn := combat.Phase == cPhasePlayerTurn && combat.CurrentTurn == combat.ViewerID
 	for _, enemy := range combat.Enemies {
-		if curY+2 >= e.height-HUDRows-5 {
+		if curY+2 >= hudY-5 {
 			break
 		}
-		e.drawEnemyRow(curY, enemy, tick)
+		targeted := false
+		if isViewerTurn && enemy.Alive && combat.ViewerAction >= 1 && combat.ViewerAction <= 3 {
+			if livingIdx == combat.ViewerTarget {
+				targeted = true
+			}
+		}
+		e.drawEnemyRow(curY, enemy, tick, targeted)
+		if enemy.Alive {
+			livingIdx++
+		}
 		curY += 2
 	}
-	curY++
 
-	// --- Battle separator ---
-	if curY < e.height-HUDRows-4 {
-		sepText := fmt.Sprintf("═══ BATTLE  Round %d ═══", combat.Round)
-		e.drawCenteredText(curY, sepText, 200, 180, 80, bgR, bgG, bgB, true)
-		curY++
-	}
+	// ├── BATTLE  Round N ──────┤  enemy/player divider
+	sepText := fmt.Sprintf(" BATTLE  Round %d ", combat.Round)
+	e.drawBoxDivider(curY, sepText, bR, bG, bB, 200, 180, 80, bgR, bgG, bgB)
 	curY++
 
 	// --- Player area ---
 	for _, cp := range combat.Players {
-		if curY+1 >= e.height-HUDRows-3 {
+		if curY+1 >= hudY-3 {
 			break
 		}
 		e.drawCombatPlayerRow(curY, cp)
 		curY++
 	}
+
+	// ├─────────────────────────┤  player/log divider
+	e.drawBoxDivider(curY, "", bR, bG, bB, 0, 0, 0, bgR, bgG, bgB)
 	curY++
 
 	// --- Battle log ---
-	logStart := e.height - HUDRows - len(combat.Log) - 1
+	logStart := hudY - len(combat.Log)
 	if logStart < curY {
 		logStart = curY
 	}
 	for i, msg := range combat.Log {
 		row := logStart + i
-		if row >= e.height-HUDRows {
+		if row >= hudY {
 			break
 		}
 		fgR, fgG, fgB := uint8(160), uint8(160), uint8(170)
@@ -95,7 +120,7 @@ func (e *Engine) renderCombatView(combat *CombatRenderData, viewerName string, v
 		if i == len(combat.Log)-1 {
 			fgR, fgG, fgB = 220, 220, 230
 		}
-		e.writeHUDTextLine(row, " "+msg, fgR, fgG, fgB, bgR, bgG, bgB)
+		e.writeText(row, 2, e.width-1, msg, fgR, fgG, fgB, bgR, bgG, bgB, false)
 	}
 
 	// --- Victory/Defeat overlay ---
@@ -108,16 +133,50 @@ func (e *Engine) renderCombatView(combat *CombatRenderData, viewerName string, v
 	}
 
 	// --- Combat HUD (bottom rows) ---
-	e.drawCombatHUD(combat, viewerName, viewerColor, totalPlayers, stats)
+	e.drawCombatHUD(combat, viewerName, viewerColor, totalPlayers, stats, bR, bG, bB)
 
 	return e.emitDiff()
 }
 
+// drawBoxRow draws a full horizontal box line: left + fill + right.
+func (e *Engine) drawBoxRow(row int, left, fill, right rune, fR, fG, fB, bR, bG, bB uint8) {
+	if row < 0 || row >= e.height {
+		return
+	}
+	e.next[row][0] = Cell{Ch: left, FgR: fR, FgG: fG, FgB: fB, BgR: bR, BgG: bG, BgB: bB}
+	for x := 1; x < e.width-1; x++ {
+		e.next[row][x] = Cell{Ch: fill, FgR: fR, FgG: fG, FgB: fB, BgR: bR, BgG: bG, BgB: bB}
+	}
+	if e.width > 1 {
+		e.next[row][e.width-1] = Cell{Ch: right, FgR: fR, FgG: fG, FgB: fB, BgR: bR, BgG: bG, BgB: bB}
+	}
+}
+
+// drawBoxDivider draws ├─ text ─┤ with optional centered text.
+func (e *Engine) drawBoxDivider(row int, text string, fR, fG, fB, tR, tG, tB, bR, bG, bB uint8) {
+	e.drawBoxRow(row, '├', '─', '┤', fR, fG, fB, bR, bG, bB)
+	if text != "" {
+		runes := []rune(text)
+		cx := (e.width - len(runes)) / 2
+		for i, r := range runes {
+			x := cx + i
+			if x > 0 && x < e.width-1 && row >= 0 && row < e.height {
+				e.next[row][x] = Cell{Ch: r, FgR: tR, FgG: tG, FgB: tB, BgR: bR, BgG: bG, BgB: bB, Bold: true}
+			}
+		}
+	}
+}
+
 // drawEnemyRow draws an enemy with name and HP bar.
-func (e *Engine) drawEnemyRow(row int, enemy CombatEnemy, tick uint64) {
+func (e *Engine) drawEnemyRow(row int, enemy CombatEnemy, tick uint64, targeted bool) {
 	bgR, bgG, bgB := uint8(12), uint8(12), uint8(18)
 
-	// Simple rat ASCII art based on alive state
+	// Target indicator (col 1, inside left border)
+	if targeted {
+		if 1 < e.width && row >= 0 && row < e.height {
+			e.next[row][1] = Cell{Ch: '▶', FgR: 255, FgG: 220, FgB: 80, BgR: bgR, BgG: bgG, BgB: bgB, Bold: true}
+		}
+	}
 	col := 2
 	if enemy.Alive {
 		// Rat sprite chars
@@ -128,7 +187,7 @@ func (e *Engine) drawEnemyRow(row int, enemy CombatEnemy, tick uint64) {
 			if ratFrame == 1 && i == 2 {
 				ch = '-'
 			}
-			if x < e.width && row < e.height {
+			if x < e.width-1 && row < e.height {
 				e.next[row][x] = Cell{Ch: ch, FgR: 180, FgG: 160, FgB: 140, BgR: bgR, BgG: bgG, BgB: bgB}
 			}
 		}
@@ -148,12 +207,12 @@ func (e *Engine) drawEnemyRow(row int, enemy CombatEnemy, tick uint64) {
 	}
 	for i, r := range []rune(label) {
 		x := col + i
-		if x < e.width && row < e.height {
+		if x < e.width-1 && row < e.height {
 			e.next[row][x] = Cell{Ch: r, FgR: nameR, FgG: nameG, FgB: nameB, BgR: bgR, BgG: bgG, BgB: bgB}
 		}
 	}
 
-	// HP bar on next row or same row after name
+	// HP bar on next row
 	barRow := row + 1
 	if barRow >= e.height {
 		return
@@ -169,7 +228,7 @@ func (e *Engine) drawHPBar(row, col, width, hp, maxHP int, fgR, fgG, fgB uint8, 
 	hpText := fmt.Sprintf("HP %d/%d", hp, maxHP)
 	for i, r := range []rune(hpText) {
 		x := col + i
-		if x < e.width && row < e.height {
+		if x < e.width-1 && row < e.height {
 			e.next[row][x] = Cell{Ch: r, FgR: fgR, FgG: fgG, FgB: fgB, BgR: bgR, BgG: bgG, BgB: bgB}
 		}
 	}
@@ -186,7 +245,7 @@ func (e *Engine) drawHPBar(row, col, width, hp, maxHP int, fgR, fgG, fgB uint8, 
 
 	for i := 0; i < width; i++ {
 		x := barStart + i
-		if x >= e.width {
+		if x >= e.width-1 {
 			break
 		}
 		ch := '░'
@@ -216,7 +275,7 @@ func (e *Engine) drawCombatPlayerRow(row int, cp CombatPlayer) {
 	colorIdx := cp.Color % len(PlayerBGColors)
 	pR, pG, pB := PlayerBGColors[colorIdx][0], PlayerBGColors[colorIdx][1], PlayerBGColors[colorIdx][2]
 
-	if row < e.height && col < e.width {
+	if row < e.height && col < e.width-1 {
 		e.next[row][col] = Cell{Ch: '●', FgR: pR, FgG: pG, FgB: pB, BgR: bgR, BgG: bgG, BgB: bgB, Bold: true}
 	}
 	col += 2
@@ -235,7 +294,7 @@ func (e *Engine) drawCombatPlayerRow(row int, cp CombatPlayer) {
 	}
 	for i, r := range []rune(name) {
 		x := col + i
-		if x < e.width {
+		if x < e.width-1 {
 			e.next[row][x] = Cell{Ch: r, FgR: nameR, FgG: nameG, FgB: nameB, BgR: bgR, BgG: bgG, BgB: bgB, Bold: cp.IsViewer}
 		}
 	}
@@ -249,7 +308,7 @@ func (e *Engine) drawCombatPlayerRow(row int, cp CombatPlayer) {
 	hpText := fmt.Sprintf("HP %d/%d", cp.HP, cp.MaxHP)
 	for i, r := range []rune(hpText) {
 		x := barCol + i
-		if x < e.width {
+		if x < e.width-1 {
 			e.next[row][x] = Cell{Ch: r, FgR: hpR, FgG: hpG, FgB: hpB, BgR: bgR, BgG: bgG, BgB: bgB}
 		}
 	}
@@ -271,7 +330,8 @@ func (e *Engine) drawCenteredText(row int, text string, fgR, fgG, fgB, bgR, bgG,
 }
 
 // drawCombatHUD draws the bottom 4 rows during combat with two-column layout.
-func (e *Engine) drawCombatHUD(combat *CombatRenderData, viewerName string, viewerColor, totalPlayers int, stats HUDStats) {
+// The separator row doubles as the bottom border of the combat box (┕━━━┙).
+func (e *Engine) drawCombatHUD(combat *CombatRenderData, viewerName string, viewerColor, totalPlayers int, stats HUDStats, bdrR, bdrG, bdrB uint8) {
 	hudY := e.height - HUDRows
 	if hudY < 0 {
 		return
@@ -280,13 +340,18 @@ func (e *Engine) drawCombatHUD(combat *CombatRenderData, viewerName string, view
 	splitCol := e.width / 2
 	bgR, bgG, bgB := uint8(20), uint8(15), uint8(22)
 
-	// Row 0: separator — red-tinted gradient
+	// Row 0: separator — bottom border of combat box with red-tinted gradient
 	for x := 0; x < e.width; x++ {
 		t := uint8(60 - x*40/max(e.width, 1))
 		e.next[hudY][x] = Cell{
 			Ch: '━', FgR: 140 + t, FgG: 40 + t, FgB: 40 + t,
 			BgR: bgR, BgG: bgG, BgB: bgB,
 		}
+	}
+	// Connect to side borders with corner characters
+	e.next[hudY][0] = Cell{Ch: '┕', FgR: bdrR, FgG: bdrG, FgB: bdrB, BgR: bgR, BgG: bgG, BgB: bgB}
+	if e.width > 1 {
+		e.next[hudY][e.width-1] = Cell{Ch: '┙', FgR: bdrR, FgG: bdrG, FgB: bdrB, BgR: bgR, BgG: bgG, BgB: bgB}
 	}
 
 	// Fill rows 1-3 with background and vertical separator
@@ -353,8 +418,36 @@ func (e *Engine) drawCombatHUD(combat *CombatRenderData, viewerName string, view
 	} else if combat.CurrentTurn != combat.ViewerID {
 		e.writeText(row2, 1, splitCol, "WAITING...", 120, 120, 135, bgR, bgG, bgB, false)
 	} else {
-		e.writeText(row2, 1, splitCol, "1:Melee 2:Ranged 3:Magic 4:Defend", 180, 180, 195, bgR, bgG, bgB, false)
-		e.writeText(row3, 1, splitCol, "←→:Target  Enter:Confirm", 130, 130, 145, bgR, bgG, bgB, false)
+		// Action labels with highlight on selected action
+		type actionLabel struct {
+			key  string
+			name string
+			idx  int
+		}
+		actions := []actionLabel{
+			{"1", "Melee", 1},
+			{"2", "Ranged", 2},
+			{"3", "Magic", 3},
+			{"4", "Defend", 4},
+		}
+		col := 1
+		for i, a := range actions {
+			if i > 0 {
+				col = e.writeText(row2, col, splitCol, " ", 80, 80, 95, bgR, bgG, bgB, false)
+			}
+			selected := combat.ViewerAction == a.idx
+			label := a.key + ":" + a.name
+			if selected {
+				col = e.writeText(row2, col, splitCol, label, 255, 255, 220, bgR, bgG, bgB, true)
+			} else {
+				col = e.writeText(row2, col, splitCol, label, 120, 120, 135, bgR, bgG, bgB, false)
+			}
+		}
+		if combat.ViewerAction >= 1 && combat.ViewerAction <= 3 {
+			e.writeText(row3, 1, splitCol, "←→:Target  Enter:Confirm", 180, 180, 195, bgR, bgG, bgB, false)
+		} else {
+			e.writeText(row3, 1, splitCol, "Pick an action (1-4)", 130, 130, 145, bgR, bgG, bgB, false)
+		}
 	}
 
 	// --- Right column: stat bars ---

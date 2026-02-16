@@ -51,6 +51,8 @@ type CombatRenderData struct {
 	Log           []string
 	ViewerID      string
 	Transitioning bool
+	ViewerAction  int   // selected action (1-3, 0=none)
+	ViewerTarget  int   // selected enemy target index
 }
 
 // CombatEnemy is enemy data for rendering.

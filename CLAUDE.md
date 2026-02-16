@@ -29,11 +29,16 @@ cmd/maptools/main.go        # Map validation, viz, stats CLI
 internal/
   server/ssh.go             # SSH server, session handler, input parsing
   game/
-    loop.go                 # Game loop (20 TPS), input/broadcast
+    loop.go                 # Game loop (20 TPS), input/broadcast, combat integration
     player.go               # Player types and input events
+    combat.go               # Fight state machine, CombatState snapshots
+    combat_actions.go       # Damage resolution (melee, ranged, magic, defend)
+    enemy.go                # Enemy definitions and spawning
+    timing.go               # Tick rate and timing constants
     world.go                # World helpers (delegates to maps pkg)
   render/
     engine.go               # Double-buffer diff renderer + HUD
+    combat_view.go          # Combat screen renderer (enemy/player/log/HUD)
     tile_sprites.go         # Tile sprite renderers (15 tile types)
     viewport.go             # Camera coordinate translation
     ansi.go                 # ANSI escape code helpers
@@ -53,10 +58,22 @@ docs/procgen.md             # Procedural generation design & reference
 
 - **Viewport:** The visible portion of the world, defined by camera position (`CamX`/`CamY`) and size (`ViewW`/`ViewH`) in world tile units. Centered on the player, clamped to map edges.
 - **World tiles:** The tile grid area filling the upper portion of the screen. Each tile occupies `TileWidth` x `TileHeight` screen cells.
-- **HUD:** The bottom 3 rows of the terminal (`HUDRows = 3`): a separator line, an info bar (player name, map name, online count), and a controls bar.
+- **HUD:** The bottom 4 rows of the terminal (`HUDRows = 4`): a separator line, then 3 content rows in a two-column layout. Left column: world info, EXP/level, controls. Right column: Health, Stamina, Magic stat bars.
 - **Sprite:** The pixel-level representation of a tile or player — a `TileWidth` x `TileHeight` grid of `SpriteCell`s stamped into the buffer via `stampSprite`.
 - **Buffers (`current` / `next`):** The double-buffer system. `next` is built each frame, diffed against `current`, and only changed cells are emitted as ANSI output.
-- **Debug view:** An alternate full-screen view (toggled with `~`) showing all tile sprites and player direction sprites in a grid.
+- **Debug view:** An alternate full-screen view (toggled with `` ` ``) showing all tile sprites and player direction sprites in a grid.
+
+## Combat View Terminology
+
+The combat screen (`renderCombatView` in `combat_view.go`) replaces the world view when a player is in a fight. Layout from top to bottom:
+
+- **Enemy area:** `drawEnemyRow()` renders each enemy with a simple ASCII sprite + HP bar. 2 rows per enemy. A `▶` target indicator appears next to the selected target.
+- **Battle separator:** A centered `═══ BATTLE  Round N ═══` divider line between enemies and players.
+- **Player area:** `drawCombatPlayerRow()` renders each player with a color dot, name, and HP text. 1 row per player. The viewer's row is marked with `←`.
+- **Battle log:** The last N combat messages, positioned bottom-up just above the HUD. Most recent message is brighter.
+- **Combat HUD:** `drawCombatHUD()`, the bottom `HUDRows` (4) rows with a two-column layout. Left column: turn info, action selection (1-4), target/confirm hints. Right column: Health, Stamina, Magic stat bars. Selected action is highlighted bright/bold.
+- **Transition flash:** A red/black pulsing screen with centered `!! ENCOUNTER !!` text, shown for ~1 second before combat starts.
+- **Victory/Defeat overlay:** Centered `★ VICTORY ★` or `✖ DEFEAT ✖` text drawn over the middle of the screen during result phase.
 
 ## Game World Terminology
 
@@ -66,8 +83,17 @@ docs/procgen.md             # Procedural generation design & reference
 
 ## Controls
 
-- **WASD / Arrow Keys:** Move
+### Overworld
+- **WASD / Arrow Keys:** Move (first press turns, second press moves)
+- **`` ` `` (backtick):** Toggle debug sprite view
+- **`~` (tilde):** Force-start combat encounter (debug)
 - **Q / Ctrl-C:** Quit
+
+### Combat
+- **1 / 2 / 3:** Select action (Melee / Ranged / Magic)
+- **4:** Defend (immediate, no target needed)
+- **← →:** Cycle enemy target
+- **Enter:** Confirm action on selected target
 
 ## Map Format
 

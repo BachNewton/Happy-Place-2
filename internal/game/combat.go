@@ -23,6 +23,8 @@ type CombatState struct {
 	Log          []string
 	ViewerID     string // who this snapshot is for
 	Transitioning bool  // true if the viewer is still in transition
+	ViewerAction int    // selected action (1=Melee,2=Ranged,3=Magic, 0=none)
+	ViewerTarget int    // selected enemy target index
 }
 
 // EnemySnapshot is a read-only view of an enemy for rendering.
@@ -236,6 +238,12 @@ func (f *Fight) Snapshot(viewerID string, players map[string]*Player) *CombatSta
 	logCopy := make([]string, len(f.Log))
 	copy(logCopy, f.Log)
 
+	var viewerAction, viewerTarget int
+	if p, ok := players[viewerID]; ok {
+		viewerAction = p.CombatAction
+		viewerTarget = p.CombatTarget
+	}
+
 	return &CombatState{
 		Phase:         f.Phase,
 		Round:         f.Round,
@@ -246,6 +254,8 @@ func (f *Fight) Snapshot(viewerID string, players map[string]*Player) *CombatSta
 		Log:           logCopy,
 		ViewerID:      viewerID,
 		Transitioning: transitioning,
+		ViewerAction:  viewerAction,
+		ViewerTarget:  viewerTarget,
 	}
 }
 

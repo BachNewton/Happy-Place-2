@@ -199,6 +199,8 @@ func (s *SSHServer) handleSession(sess ssh.Session) {
 					Log:           c.Log,
 					ViewerID:      c.ViewerID,
 					Transitioning: c.Transitioning,
+					ViewerAction:  c.ViewerAction,
+					ViewerTarget:  c.ViewerTarget,
 				}
 			}
 
