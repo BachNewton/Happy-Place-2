@@ -102,12 +102,12 @@ func connectedTile(name string, n int, fn func(mask uint8, v uint, tick uint64) 
 }
 
 // tallVariantTile builds a tileEntry for tiles that return TileSprites directly
-// (base + overlays), keyed by variant index.
-func tallVariantTile(name string, n int, fn func(v uint) TileSprites) tileEntry {
+// (base + overlays), keyed by variant index and tick.
+func tallVariantTile(name string, n int, fn func(v uint, tick uint64) TileSprites) tileEntry {
 	return tileEntry{
 		name: name,
 		fn: func(wx, wy int, tick uint64, m *maps.Map) TileSprites {
-			return fn(TileHash(wx, wy) % uint(n))
+			return fn(TileHash(wx, wy)%uint(n), tick)
 		},
 		variants: n,
 	}
@@ -119,11 +119,11 @@ var tileList = []tileEntry{
 	variantTile("grass", 4, func(v uint, tick uint64) Sprite { return grassSprite(v, tick) }),
 	posVariantTile("wall", 4, func(wx, wy int, v uint, _ uint64) Sprite { return wallSprite(wx, wy, v) }),
 	posVariantTile("water", 1, func(wx, wy int, _ uint, tick uint64) Sprite { return waterSprite(wx, wy, tick) }),
-	tallVariantTile("tree", 4, func(v uint) TileSprites { return tallTreeSprite(v) }),
+	tallVariantTile("tree", 4, func(v uint, tick uint64) TileSprites { return tallTreeSprite(v, tick) }),
 	variantTile("path", 4, func(v uint, _ uint64) Sprite { return pathSprite(v) }),
 	variantTile("door", 1, func(_ uint, _ uint64) Sprite { return doorSprite() }),
 	variantTile("floor", 4, func(v uint, _ uint64) Sprite { return floorSprite(v) }),
-	connectedTile("fence", 2, func(mask uint8, v uint, _ uint64) Sprite { return fenceSprite(mask, v) }),
+	connectedTile("fence", 2, func(mask uint8, v uint, tick uint64) Sprite { return fenceSprite(mask, v, tick) }),
 	variantTile("flowers", 6, func(v uint, _ uint64) Sprite { return flowerSprite(v) }),
 }
 
@@ -266,11 +266,32 @@ func waterSprite(wx, wy int, tick uint64) Sprite {
 	return s
 }
 
+// dimmedGrass returns a grass sprite with all colors scaled by pct/100.
+// pct=100 is full brightness (no change), pct=85 is 15% darker, etc.
+func dimmedGrass(v uint, tick uint64, pct uint16) Sprite {
+	s := grassSprite(v, tick)
+	if pct >= 100 {
+		return s
+	}
+	for y := 0; y < TileHeight; y++ {
+		for x := 0; x < TileWidth; x++ {
+			c := &s[y][x].Cell
+			c.BgR = uint8(uint16(c.BgR) * pct / 100)
+			c.BgG = uint8(uint16(c.BgG) * pct / 100)
+			c.BgB = uint8(uint16(c.BgB) * pct / 100)
+			c.FgR = uint8(uint16(c.FgR) * pct / 100)
+			c.FgG = uint8(uint16(c.FgG) * pct / 100)
+			c.FgB = uint8(uint16(c.FgB) * pct / 100)
+		}
+	}
+	return s
+}
+
 // --- Tree ---
 
 // tallTreeSprite returns a TileSprites with a trunk base and two canopy overlays
 // at DY=1 (lower canopy) and DY=2 (upper canopy), making the tree 3 tiles tall.
-func tallTreeSprite(v uint) TileSprites {
+func tallTreeSprite(v uint, tick uint64) TileSprites {
 	// Match grass/flower base green: (28, 65, 28)
 	grassR, grassG, grassB := uint8(28), uint8(65), uint8(28)
 	// Canopy leaf bg matches grass
@@ -284,22 +305,9 @@ func tallTreeSprite(v uint) TileSprites {
 	T := TransparentCell
 
 	// --- Base: grass sprite with a subtle shadow tint, trunk on top ---
-	base := grassSprite(v, 0)
+	base := dimmedGrass(v, tick, 85)
 
-	// Darken every cell ~15% to simulate canopy shadow (use uint16 to avoid overflow)
 	dim := func(c uint8) uint8 { return uint8(uint16(c) * 85 / 100) }
-	for y := 0; y < TileHeight; y++ {
-		for x := 0; x < TileWidth; x++ {
-			c := &base[y][x].Cell
-			c.BgR = dim(c.BgR)
-			c.BgG = dim(c.BgG)
-			c.BgB = dim(c.BgB)
-			c.FgR = dim(c.FgR)
-			c.FgG = dim(c.FgG)
-			c.FgB = dim(c.FgB)
-		}
-	}
-
 	sbgR, sbgG, sbgB := dim(grassR), dim(grassG+uint8(v*3)), dim(grassB)
 	// Trunk columns
 	for y := 0; y < TileHeight; y++ {
@@ -471,12 +479,14 @@ func floorSprite(v uint) Sprite {
 
 // --- Fence ---
 
-func fenceSprite(mask uint8, v uint) Sprite {
-	bgR, bgG, bgB := uint8(28), uint8(65), uint8(28)
+func fenceSprite(mask uint8, v uint, tick uint64) Sprite {
 	fgR, fgG, fgB := uint8(155), uint8(115), uint8(55)
 	railR, railG, railB := fgR-10, fgG-10, fgB-5
 
-	s := FillSprite(' ', 0, 0, 0, bgR, bgG, bgB)
+	s := dimmedGrass(v, tick, 95)
+
+	// Read the bg color from the center cell for fence element backgrounds
+	bgR, bgG, bgB := s[2][5].Cell.BgR, s[2][5].Cell.BgG, s[2][5].Cell.BgB
 
 	// Center post always present (cols 4-5, rows 1-3)
 	for y := 1; y <= 3; y++ {
@@ -510,12 +520,6 @@ func fenceSprite(mask uint8, v uint) Sprite {
 			s[1][x] = SC('═', railR, railG, railB, bgR, bgG, bgB)
 			s[3][x] = SC('═', railR, railG, railB, bgR, bgG, bgB)
 		}
-	}
-
-	// Grass tuft decoration only when no south connection
-	if mask&ConnS == 0 && v%2 == 0 {
-		s[4][3] = SC(',', 50, 115, 42, bgR, bgG, bgB)
-		s[4][7] = SC('.', 60, 135, 50, bgR, bgG, bgB)
 	}
 
 	return s
