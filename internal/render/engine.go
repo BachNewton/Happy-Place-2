@@ -146,7 +146,6 @@ func (e *Engine) Render(
 			sx := vp.OffsetX + tx*TileWidth
 			sy := vp.OffsetY + ty*TileHeight
 			e.stampSprite(sx, sy, sprite, false)
-			// Overlay sign sprite on interaction tiles
 			if tileMap.InteractionAt(wx, wy) != nil {
 				e.stampSprite(sx, sy, signSprite, true)
 			}
