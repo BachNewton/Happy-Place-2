@@ -11,7 +11,9 @@
       "Bash(git commit:*)",
       "Bash(./server.exe:*)",
       "Bash(go run:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(python3:*)",
+      "Bash(node -e:*)"
     ]
   }
 }

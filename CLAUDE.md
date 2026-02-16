@@ -22,6 +22,10 @@ ssh -o StrictHostKeyChecking=no -p 2222 YourName@localhost
 
 ```
 cmd/server/main.go          # Entry point, host key gen, wiring
+cmd/mapgen/                  # Procedural map generator CLI
+  main.go                   #   Wilderness generator + flag parsing
+  noise.go                  #   2D simplex noise (self-contained)
+cmd/maptools/main.go        # Map validation, viz, stats CLI
 internal/
   server/ssh.go             # SSH server, session handler, input parsing
   game/
@@ -30,10 +34,12 @@ internal/
     world.go                # World helpers (delegates to maps pkg)
   render/
     engine.go               # Double-buffer diff renderer + HUD
+    tile_sprites.go         # Tile sprite renderers (15 tile types)
     viewport.go             # Camera coordinate translation
     ansi.go                 # ANSI escape code helpers
   maps/loader.go            # JSON map parser + DefaultMap() fallback
-assets/maps/town.json       # Starter map (60x30)
+assets/maps/                # JSON tile maps (handcrafted + generated)
+docs/procgen.md             # Procedural generation design & reference
 ```
 
 ## Architecture
@@ -66,6 +72,32 @@ assets/maps/town.json       # Starter map (60x30)
 ## Map Format
 
 Maps are JSON files in `assets/maps/`. See `town.json` for the format. The legend maps tile indices to characters, colors, walkability, and names.
+
+### Tile Types
+
+15 tile types have sprite renderers in `tile_sprites.go`:
+
+| Name | Walkable | Notes |
+|------|----------|-------|
+| grass | yes | 4 variants, animated sway |
+| wall | yes | 4 variants, mortar lines |
+| water | no | Animated waves, position-aware |
+| tree | no | 4 variants, canopy + trunk |
+| path | yes | 4 variants, worn center + pebbles |
+| door | yes | Plank lines + doorknob |
+| floor | yes | 4 variants, wood grain |
+| fence | no | Connected tile (adapts to neighbors) |
+| flowers | yes | 6 color variants, stems |
+| sand | yes | 4 variants, animated grain dots |
+| tall_grass | yes | 4 variants, animated dense blades |
+| rock | no | 4 variants, craggy texture |
+| shallow_water | yes | Animated, lighter than deep water |
+| dirt | yes | 4 variants, pebble dots |
+| bridge | yes | 2 variants, planks + rails |
+
+## Map Generation (experimental, not production-ready)
+
+`cmd/mapgen/` exists but generates low-quality maps. **Do not use it** — all maps should be handcrafted. See `docs/procgen.md` for design notes if the generator is revisited later.
 
 ## Production Deployment
 
