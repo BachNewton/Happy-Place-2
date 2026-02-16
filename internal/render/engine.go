@@ -135,24 +135,46 @@ func (e *Engine) Render(
 		}
 	}
 
-	// Fill world tiles — each tile is TileWidth x TileHeight screen cells
+	// --- Pass 1: Ground tiles + collect overlays ---
+	const maxOverlayDY = 3 // scan extra rows below viewport for tiles whose overlays reach in
 	signSprite := SignSprite()
-	for ty := 0; ty < vp.ViewH; ty++ {
+
+	type pendingOverlay struct {
+		sx, sy int
+		sprite Sprite
+	}
+	var overlays []pendingOverlay
+
+	scanH := vp.ViewH + maxOverlayDY
+	for ty := 0; ty < scanH; ty++ {
 		for tx := 0; tx < vp.ViewW; tx++ {
 			wx := vp.CamX + tx
 			wy := vp.CamY + ty
+			if wx < 0 || wx >= tileMap.Width || wy < 0 || wy >= tileMap.Height {
+				continue
+			}
 			tile := tileMap.TileAt(wx, wy)
-			sprite := TileSprite(tile, wx, wy, tick, tileMap)
+			ts := TileSprite(tile, wx, wy, tick, tileMap)
 			sx := vp.OffsetX + tx*TileWidth
 			sy := vp.OffsetY + ty*TileHeight
-			e.stampSprite(sx, sy, sprite, false)
-			if tileMap.InteractionAt(wx, wy) != nil {
-				e.stampSprite(sx, sy, signSprite, true)
+
+			// Only stamp base for tiles within the visible viewport
+			if ty < vp.ViewH {
+				e.stampSprite(sx, sy, ts.Base, false)
+				if tileMap.InteractionAt(wx, wy) != nil {
+					e.stampSprite(sx, sy, signSprite, true)
+				}
+			}
+
+			// Collect overlays — rendered after players
+			for _, ov := range ts.Overlays {
+				ovSY := sy - ov.DY*TileHeight
+				overlays = append(overlays, pendingOverlay{sx: sx, sy: ovSY, sprite: ov.Sprite})
 			}
 		}
 	}
 
-	// Overlay players
+	// --- Pass 2: Players ---
 	var viewerPopup *InteractionPopup
 	for _, p := range players {
 		sx, sy := vp.WorldToScreen(p.X, p.Y)
@@ -165,6 +187,11 @@ func (e *Engine) Render(
 		}
 		sprite := PlayerSprite(p.Dir, p.Anim, p.AnimFrame, p.Color, isSelf, p.Name)
 		e.stampSprite(sx, sy, sprite, true)
+	}
+
+	// --- Pass 3: Overlays (on top of players) ---
+	for _, ov := range overlays {
+		e.stampSprite(ov.sx, ov.sy, ov.sprite, true)
 	}
 
 	// Draw interaction popup above sign tile
@@ -460,12 +487,37 @@ func (e *Engine) renderDebugView(viewerColor, page int, tick uint64) string {
 			if entry.connected {
 				continue
 			}
+
+			// Determine max overlay DY for height calculation
+			maxDY := 0
+			if entry.variants > 0 {
+				wx, wy := variantCoord(0, entry.variants)
+				ts := entry.fn(wx, wy, tick, nil)
+				for _, ov := range ts.Overlays {
+					if ov.DY > maxDY {
+						maxDY = ov.DY
+					}
+				}
+			}
+			overlayPixels := maxDY * TileHeight
+
 			groupWidth := entry.variants*TileWidth + (entry.variants-1)*gap
 			sx, sy := placeGroup(entry.name, groupWidth)
+
 			for v := 0; v < entry.variants; v++ {
 				wx, wy := variantCoord(v, entry.variants)
-				sprite := entry.fn(wx, wy, tick, nil)
-				e.stampSprite(sx+v*(TileWidth+gap), sy+1, sprite, false)
+				ts := entry.fn(wx, wy, tick, nil)
+				baseX := sx + v*(TileWidth+gap)
+				baseY := sy + 1 + overlayPixels // push base down so overlays fit above
+				e.stampSprite(baseX, baseY, ts.Base, false)
+				for _, ov := range ts.Overlays {
+					e.stampSprite(baseX, baseY-ov.DY*TileHeight, ov.Sprite, true)
+				}
+			}
+
+			// Advance cursor past the extra overlay height
+			if overlayPixels > 0 {
+				curY += overlayPixels
 			}
 		}
 

@@ -2,8 +2,8 @@ package render
 
 import "happy-place-2/internal/maps"
 
-// tileFunc generates a sprite for a tile at world position (wx,wy) at the given tick.
-type tileFunc func(wx, wy int, tick uint64, m *maps.Map) Sprite
+// tileFunc generates sprites for a tile at world position (wx,wy) at the given tick.
+type tileFunc func(wx, wy int, tick uint64, m *maps.Map) TileSprites
 
 // tileEntry holds a named tile's sprite generator and its variant count.
 type tileEntry struct {
@@ -39,8 +39,8 @@ func variantCoord(v, variants int) (int, int) {
 func variantTile(name string, n int, fn func(v uint, tick uint64) Sprite) tileEntry {
 	return tileEntry{
 		name: name,
-		fn: func(wx, wy int, tick uint64, m *maps.Map) Sprite {
-			return fn(TileHash(wx, wy)%uint(n), tick)
+		fn: func(wx, wy int, tick uint64, m *maps.Map) TileSprites {
+			return TileSprites{Base: fn(TileHash(wx, wy)%uint(n), tick)}
 		},
 		variants: n,
 	}
@@ -51,8 +51,8 @@ func variantTile(name string, n int, fn func(v uint, tick uint64) Sprite) tileEn
 func posVariantTile(name string, n int, fn func(wx, wy int, v uint, tick uint64) Sprite) tileEntry {
 	return tileEntry{
 		name: name,
-		fn: func(wx, wy int, tick uint64, m *maps.Map) Sprite {
-			return fn(wx, wy, TileHash(wx, wy)%uint(n), tick)
+		fn: func(wx, wy int, tick uint64, m *maps.Map) TileSprites {
+			return TileSprites{Base: fn(wx, wy, TileHash(wx, wy)%uint(n), tick)}
 		},
 		variants: n,
 	}
@@ -91,13 +91,25 @@ func neighborMask(name string, wx, wy int, m *maps.Map) uint8 {
 func connectedTile(name string, n int, fn func(mask uint8, v uint, tick uint64) Sprite) tileEntry {
 	return tileEntry{
 		name: name,
-		fn: func(wx, wy int, tick uint64, m *maps.Map) Sprite {
+		fn: func(wx, wy int, tick uint64, m *maps.Map) TileSprites {
 			mask := neighborMask(name, wx, wy, m)
-			return fn(mask, TileHash(wx, wy)%uint(n), tick)
+			return TileSprites{Base: fn(mask, TileHash(wx, wy)%uint(n), tick)}
 		},
 		variants:  n,
 		connected: true,
 		connFn:    fn,
+	}
+}
+
+// tallVariantTile builds a tileEntry for tiles that return TileSprites directly
+// (base + overlays), keyed by variant index.
+func tallVariantTile(name string, n int, fn func(v uint) TileSprites) tileEntry {
+	return tileEntry{
+		name: name,
+		fn: func(wx, wy int, tick uint64, m *maps.Map) TileSprites {
+			return fn(TileHash(wx, wy) % uint(n))
+		},
+		variants: n,
 	}
 }
 
@@ -107,7 +119,7 @@ var tileList = []tileEntry{
 	variantTile("grass", 4, func(v uint, tick uint64) Sprite { return grassSprite(v, tick) }),
 	posVariantTile("wall", 4, func(wx, wy int, v uint, _ uint64) Sprite { return wallSprite(wx, wy, v) }),
 	posVariantTile("water", 1, func(wx, wy int, _ uint, tick uint64) Sprite { return waterSprite(wx, wy, tick) }),
-	variantTile("tree", 4, func(v uint, _ uint64) Sprite { return treeSprite(v) }),
+	tallVariantTile("tree", 4, func(v uint) TileSprites { return tallTreeSprite(v) }),
 	variantTile("path", 4, func(v uint, _ uint64) Sprite { return pathSprite(v) }),
 	variantTile("door", 1, func(_ uint, _ uint64) Sprite { return doorSprite() }),
 	variantTile("floor", 4, func(v uint, _ uint64) Sprite { return floorSprite(v) }),
@@ -129,12 +141,12 @@ func init() {
 	}
 }
 
-// TileSprite returns the sprite for a tile at world position (wx,wy) at the given tick.
-func TileSprite(tile maps.TileDef, wx, wy int, tick uint64, m *maps.Map) Sprite {
+// TileSprite returns the sprites for a tile at world position (wx,wy) at the given tick.
+func TileSprite(tile maps.TileDef, wx, wy int, tick uint64, m *maps.Map) TileSprites {
 	if e, ok := tileIndex[tile.Name]; ok {
 		return e.fn(wx, wy, tick, m)
 	}
-	return fallbackSprite(tile)
+	return TileSprites{Base: fallbackSprite(tile)}
 }
 
 // --- Grass ---
@@ -256,43 +268,115 @@ func waterSprite(wx, wy int, tick uint64) Sprite {
 
 // --- Tree ---
 
-func treeSprite(v uint) Sprite {
-	bgR, bgG, bgB := uint8(22), uint8(55), uint8(22)
-	s := FillSprite(' ', 0, 0, 0, bgR, bgG, bgB)
-
+// tallTreeSprite returns a TileSprites with a trunk base and two canopy overlays
+// at DY=1 (lower canopy) and DY=2 (upper canopy), making the tree 3 tiles tall.
+func tallTreeSprite(v uint) TileSprites {
+	// Match grass/flower base green: (28, 65, 28)
+	grassR, grassG, grassB := uint8(28), uint8(65), uint8(28)
+	// Canopy leaf bg matches grass
+	bgR, bgG, bgB := grassR, grassG, grassB
 	leafR, leafG, leafB := uint8(35), uint8(160), uint8(35)
 	darkR, darkG, darkB := uint8(25), uint8(120), uint8(25)
 	trunkR, trunkG, trunkB := uint8(110), uint8(75), uint8(30)
 
 	leafG += uint8(v * 5)
-
-	// Canopy (rows 0-2), trunk (rows 3-4)
-	canopy := [3]struct{ start, end int }{
-		{3, 7}, // row 0
-		{2, 8}, // row 1
-		{3, 7}, // row 2
-	}
-
 	leafChars := []rune{'♣', '♠', '♣', '♠'}
+	T := TransparentCell
 
-	for row := 0; row < 3; row++ {
-		c := canopy[row]
-		for x := c.start; x < c.end; x++ {
-			ch := leafChars[(x+row+int(v))%len(leafChars)]
-			lr, lg, lb := leafR, leafG, leafB
-			if x == c.start || x == c.end-1 {
-				lr, lg, lb = darkR, darkG, darkB
-			}
-			s[row][x] = SCBold(ch, lr, lg, lb, bgR, bgG, bgB)
+	// --- Base: grass sprite with a subtle shadow tint, trunk on top ---
+	base := grassSprite(v, 0)
+
+	// Darken every cell ~15% to simulate canopy shadow (use uint16 to avoid overflow)
+	dim := func(c uint8) uint8 { return uint8(uint16(c) * 85 / 100) }
+	for y := 0; y < TileHeight; y++ {
+		for x := 0; x < TileWidth; x++ {
+			c := &base[y][x].Cell
+			c.BgR = dim(c.BgR)
+			c.BgG = dim(c.BgG)
+			c.BgB = dim(c.BgB)
+			c.FgR = dim(c.FgR)
+			c.FgG = dim(c.FgG)
+			c.FgB = dim(c.FgB)
 		}
 	}
 
-	s[3][4] = SC('║', trunkR, trunkG, trunkB, bgR, bgG, bgB)
-	s[3][5] = SC('║', trunkR-10, trunkG-10, trunkB-5, bgR, bgG, bgB)
-	s[4][4] = SC('║', trunkR, trunkG, trunkB, bgR, bgG, bgB)
-	s[4][5] = SC('║', trunkR-10, trunkG-10, trunkB-5, bgR, bgG, bgB)
+	sbgR, sbgG, sbgB := dim(grassR), dim(grassG+uint8(v*3)), dim(grassB)
+	// Trunk columns
+	for y := 0; y < TileHeight; y++ {
+		base[y][4] = SC('║', trunkR, trunkG, trunkB, sbgR, sbgG, sbgB)
+		base[y][5] = SC('║', trunkR-10, trunkG-10, trunkB-5, sbgR, sbgG, sbgB)
+	}
+	base[4][3] = SC('╱', trunkR-20, trunkG-15, trunkB-5, sbgR, sbgG, sbgB)
+	base[4][6] = SC('╲', trunkR-20, trunkG-15, trunkB-5, sbgR, sbgG, sbgB)
 
-	return s
+	// Helper to make a transparent sprite and fill canopy rows
+	makeCanopy := func(rows [TileHeight]struct{ start, end int }) Sprite {
+		var s Sprite
+		for y := 0; y < TileHeight; y++ {
+			for x := 0; x < TileWidth; x++ {
+				s[y][x] = T()
+			}
+		}
+		for row := 0; row < TileHeight; row++ {
+			c := rows[row]
+			if c.start == c.end {
+				continue
+			}
+			for x := c.start; x < c.end; x++ {
+				ch := leafChars[(x+row+int(v))%len(leafChars)]
+				lr, lg, lb := leafR, leafG, leafB
+				if x == c.start || x == c.end-1 {
+					lr, lg, lb = darkR, darkG, darkB
+				}
+				s[row][x] = SCBold(ch, lr, lg, lb, bgR, bgG, bgB)
+			}
+		}
+		return s
+	}
+
+	// --- Upper canopy (DY=2, two tiles above base) ---
+	upper := makeCanopy([TileHeight]struct{ start, end int }{
+		{4, 6},  // row 0: narrow tip
+		{3, 7},  // row 1
+		{3, 7},  // row 2
+		{2, 8},  // row 3
+		{1, 9},  // row 4: widest, connects to lower canopy
+	})
+
+	// --- Lower canopy (DY=1, one tile above base) ---
+	// Blend of trunk and canopy: trunk visible at bottom, canopy takes over toward top.
+	lowerRows := [TileHeight]struct{ start, end int }{
+		{1, 9}, // row 0: full canopy, continues from upper
+		{1, 9}, // row 1: full canopy
+		{2, 8}, // row 2: canopy with trunk showing
+		{2, 8}, // row 3: sparse canopy, trunk prominent
+		{3, 7}, // row 4: mostly trunk, few leaves
+	}
+	lower := makeCanopy(lowerRows)
+
+	// Stamp trunk columns over the canopy in the lower rows where trunk is visible
+	branchR, branchG, branchB := trunkR-15, trunkG-10, trunkB-5
+	// Row 4: prominent trunk, small branches
+	lower[4][4] = SC('║', trunkR, trunkG, trunkB, bgR, bgG, bgB)
+	lower[4][5] = SC('║', trunkR-10, trunkG-10, trunkB-5, bgR, bgG, bgB)
+	lower[4][3] = SC('╱', branchR, branchG, branchB, bgR, bgG, bgB)
+	lower[4][6] = SC('╲', branchR, branchG, branchB, bgR, bgG, bgB)
+	// Row 3: trunk with branches reaching into canopy
+	lower[3][4] = SC('║', trunkR, trunkG, trunkB, bgR, bgG, bgB)
+	lower[3][5] = SC('║', trunkR-10, trunkG-10, trunkB-5, bgR, bgG, bgB)
+	lower[3][3] = SC('╱', branchR, branchG, branchB, bgR, bgG, bgB)
+	lower[3][6] = SC('╲', branchR, branchG, branchB, bgR, bgG, bgB)
+	// Row 2: trunk fading into canopy
+	lower[2][4] = SC('┃', trunkR, trunkG, trunkB, bgR, bgG, bgB)
+	lower[2][5] = SC('┃', trunkR-10, trunkG-10, trunkB-5, bgR, bgG, bgB)
+
+	return TileSprites{
+		Base: base,
+		Overlays: []Overlay{
+			{Sprite: lower, DY: 1},
+			{Sprite: upper, DY: 2},
+		},
+	}
 }
 
 // --- Path ---

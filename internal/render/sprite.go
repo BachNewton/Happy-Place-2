@@ -23,6 +23,18 @@ type AnimatedSprite struct {
 	TickRate int // game ticks per frame advance
 }
 
+// Overlay is a sprite rendered at a vertical offset above its owning tile.
+type Overlay struct {
+	Sprite Sprite
+	DY     int // tile units upward (1 = one tile above base)
+}
+
+// TileSprites holds the base sprite and optional overlay layers.
+type TileSprites struct {
+	Base     Sprite
+	Overlays []Overlay
+}
+
 // TransparentCell returns a SpriteCell that lets the tile underneath show through.
 func TransparentCell() SpriteCell {
 	return SpriteCell{Transparent: true}
