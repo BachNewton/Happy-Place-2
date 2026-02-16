@@ -7,7 +7,7 @@ import (
 	"happy-place-2/internal/maps"
 )
 
-const HUDRows = 5
+const HUDRows = 4
 
 // Cell represents a single terminal cell with full RGB color.
 type Cell struct {
@@ -295,100 +295,83 @@ func (e *Engine) drawHUD(playerName string, playerColor, playerCount int, mapNam
 		return
 	}
 
+	splitCol := e.width / 2
+	bgR, bgG, bgB := uint8(15), uint8(18), uint8(30)
+
 	// Row 0: separator — thin gradient line
 	for x := 0; x < e.width; x++ {
 		t := uint8(60 - x*40/max(e.width, 1))
 		e.next[hudY][x] = Cell{
 			Ch: '━', FgR: 40 + t, FgG: 70 + t, FgB: 90 + t,
-			BgR: 15, BgG: 18, BgB: 28,
+			BgR: bgR, BgG: bgG, BgB: bgB,
 		}
 	}
 
-	// Row 1: info bar — name, level, map, online count
-	barBgR, barBgG, barBgB := uint8(18), uint8(22), uint8(38)
-	for x := 0; x < e.width; x++ {
-		e.next[hudY+1][x] = Cell{Ch: ' ', BgR: barBgR, BgG: barBgG, BgB: barBgB}
+	// Fill rows 1-3 with background and vertical separator
+	for row := 1; row <= 3; row++ {
+		y := hudY + row
+		if y >= e.height {
+			break
+		}
+		for x := 0; x < e.width; x++ {
+			e.next[y][x] = Cell{Ch: ' ', BgR: bgR, BgG: bgG, BgB: bgB}
+		}
+		if splitCol > 0 && splitCol < e.width {
+			e.next[y][splitCol] = Cell{Ch: '│', FgR: 50, FgG: 60, FgB: 80, BgR: bgR, BgG: bgG, BgB: bgB}
+		}
 	}
+
+	// --- Left column ---
 	colorIdx := playerColor % len(PlayerBGColors)
 	pR, pG, pB := PlayerBGColors[colorIdx][0], PlayerBGColors[colorIdx][1], PlayerBGColors[colorIdx][2]
 	pR = pR + (255-pR)/3
 	pG = pG + (255-pG)/3
 	pB = pB + (255-pB)/3
-	infoLine := fmt.Sprintf(" %s  Lv %d  \u2502  %s  \u2502  %d Online",
-		playerName, stats.Level, mapName, playerCount)
-	e.writeHUDStyledLine(hudY+1, infoLine, barBgR, barBgG, barBgB, playerName, pR, pG, pB)
 
-	// Row 2: stat bars — HP, STA, MP (dynamically scaled to window width)
-	statBgR, statBgG, statBgB := uint8(15), uint8(18), uint8(30)
-	for x := 0; x < e.width; x++ {
-		e.next[hudY+2][x] = Cell{Ch: ' ', BgR: statBgR, BgG: statBgG, BgB: statBgB}
-	}
-	// Compute bar width: total width minus all fixed content, divided among 3 bars
-	// Fixed per bar: label + 1 space + 1 space + numText. Plus 3-col gaps between bars + 1 leading.
-	hpNums := fmt.Sprintf("%d/%d", stats.HP, stats.MaxHP)
-	staNums := fmt.Sprintf("%d/%d", stats.Stamina, stats.MaxStamina)
-	mpNums := fmt.Sprintf("%d/%d", stats.MP, stats.MaxMP)
-	// labels: "HP"(2) + "STA"(3) + "MP"(2) = 7
-	// spaces: 3 bars × 2 (before+after bar) = 6
-	// gaps: 2 × 3 = 6, leading: 1
-	fixedCols := 1 + 7 + 6 + len(hpNums) + len(staNums) + len(mpNums) + 6
-	barWidth := (e.width - fixedCols) / 3
-	if barWidth < 4 {
-		barWidth = 4
-	}
-	col := 1
-	hpFillR, hpFillG, hpFillB := hpBarColor(stats.HP, stats.MaxHP)
-	col += e.drawStatBar(hudY+2, col, "HP", stats.HP, stats.MaxHP, barWidth,
-		255, 80, 80, hpFillR, hpFillG, hpFillB, statBgR, statBgG, statBgB)
-	col += 3
-	col += e.drawStatBar(hudY+2, col, "STA", stats.Stamina, stats.MaxStamina, barWidth,
-		240, 190, 60, 210, 170, 50, statBgR, statBgG, statBgB)
-	col += 3
-	e.drawStatBar(hudY+2, col, "MP", stats.MP, stats.MaxMP, barWidth,
-		100, 140, 255, 90, 110, 240, statBgR, statBgG, statBgB)
+	// Row 1: world info — player name, map, online count
+	row1 := hudY + 1
+	col := e.writeText(row1, 1, splitCol, playerName, pR, pG, pB, bgR, bgG, bgB, true)
+	col = e.writeText(row1, col, splitCol, "  │  ", 60, 65, 85, bgR, bgG, bgB, false)
+	col = e.writeText(row1, col, splitCol, mapName, 180, 180, 195, bgR, bgG, bgB, false)
+	col = e.writeText(row1, col, splitCol, "  │  ", 60, 65, 85, bgR, bgG, bgB, false)
+	e.writeText(row1, col, splitCol, fmt.Sprintf("%d Online", playerCount), 180, 180, 195, bgR, bgG, bgB, false)
 
-	// Row 3: EXP bar (dynamically scaled to window width)
-	expBgR, expBgG, expBgB := uint8(15), uint8(18), uint8(30)
-	for x := 0; x < e.width; x++ {
-		e.next[hudY+3][x] = Cell{Ch: ' ', BgR: expBgR, BgG: expBgG, BgB: expBgB}
-	}
-	expInLevel := stats.EXP % 50
+	// Row 2: EXP / Level
+	row2 := hudY + 2
 	lvText := fmt.Sprintf("Lv %d", stats.Level)
+	col = e.writeText(row2, 1, splitCol, lvText, 100, 220, 220, bgR, bgG, bgB, true)
+	col += 2
+	expInLevel := stats.EXP % 50
 	expNums := fmt.Sprintf("%d/%d", expInLevel, 50)
-	nextLv := fmt.Sprintf("\u2192 Lv %d", stats.Level+1)
-	// Fixed: 1 lead + lvText + 2 gap + "EXP"(3) + 1 space + 1 space + expNums + 2 gap + nextLv
-	expFixed := 1 + len(lvText) + 2 + 3 + 1 + 1 + len(expNums) + 2 + len(nextLv)
-	expBarWidth := e.width - expFixed
+	expBarWidth := splitCol - col - len("EXP") - 1 - 1 - len(expNums)
 	if expBarWidth < 4 {
 		expBarWidth = 4
 	}
-	col = 1
-	for _, r := range lvText {
-		if col < e.width {
-			e.next[hudY+3][col] = Cell{Ch: r, FgR: 100, FgG: 220, FgB: 220,
-				BgR: expBgR, BgG: expBgG, BgB: expBgB, Bold: true}
-		}
-		col++
-	}
-	col += 2
-	col += e.drawStatBar(hudY+3, col, "EXP", expInLevel, 50, expBarWidth,
-		60, 200, 180, 50, 190, 160, expBgR, expBgG, expBgB)
-	col += 2
-	for _, r := range nextLv {
-		if col < e.width {
-			e.next[hudY+3][col] = Cell{Ch: r, FgR: 80, FgG: 160, FgB: 160,
-				BgR: expBgR, BgG: expBgG, BgB: expBgB}
-		}
-		col++
+	e.drawStatBar(row2, col, "EXP", expInLevel, 50, expBarWidth,
+		60, 200, 180, 50, 190, 160, bgR, bgG, bgB)
+
+	// Row 3: controls
+	row3 := hudY + 3
+	e.writeText(row3, 1, splitCol, "←↑↓→/WASD Move  │  Q Quit", 130, 130, 145, bgR, bgG, bgB, false)
+
+	// --- Right column: stat bars ---
+	rightStart := splitCol + 2
+	hpNums := fmt.Sprintf("%d/%d", stats.HP, stats.MaxHP)
+	staNums := fmt.Sprintf("%d/%d", stats.Stamina, stats.MaxStamina)
+	mpNums := fmt.Sprintf("%d/%d", stats.MP, stats.MaxMP)
+	maxNumLen := max(len(hpNums), max(len(staNums), len(mpNums)))
+	barWidth := (e.width - rightStart) - 9 - maxNumLen
+	if barWidth < 4 {
+		barWidth = 4
 	}
 
-	// Row 4: controls bar
-	ctrlBgR, ctrlBgG, ctrlBgB := uint8(12), uint8(15), uint8(25)
-	for x := 0; x < e.width; x++ {
-		e.next[hudY+4][x] = Cell{Ch: ' ', BgR: ctrlBgR, BgG: ctrlBgG, BgB: ctrlBgB}
-	}
-	controls := " \u2190\u2191\u2193\u2192/WASD Move  \u2502  Q Quit"
-	e.writeHUDTextLine(hudY+4, controls, 130, 130, 145, ctrlBgR, ctrlBgG, ctrlBgB)
+	hpFillR, hpFillG, hpFillB := hpBarColor(stats.HP, stats.MaxHP)
+	e.drawStatBar(row1, rightStart, "Health ", stats.HP, stats.MaxHP, barWidth,
+		255, 80, 80, hpFillR, hpFillG, hpFillB, bgR, bgG, bgB)
+	e.drawStatBar(row2, rightStart, "Stamina", stats.Stamina, stats.MaxStamina, barWidth,
+		240, 190, 60, 210, 170, 50, bgR, bgG, bgB)
+	e.drawStatBar(row3, rightStart, "Magic  ", stats.MP, stats.MaxMP, barWidth,
+		100, 140, 255, 90, 110, 240, bgR, bgG, bgB)
 }
 
 // hpBarColor returns the fill color for an HP bar based on current/max ratio.
@@ -460,43 +443,18 @@ func (e *Engine) drawStatBar(row, col int, label string, current, maximum, barWi
 	return col - startCol
 }
 
-func (e *Engine) writeHUDStyledLine(row int, text string, bgR, bgG, bgB uint8, highlight string, hR, hG, hB uint8) {
-	if row < 0 || row >= e.height {
-		return
-	}
-	runes := []rune(text)
-	highlightRunes := []rune(highlight)
-	highlightStart := -1
-
-	// Find highlight position
-	for i := range runes {
-		match := true
-		for j, hr := range highlightRunes {
-			if i+j >= len(runes) || runes[i+j] != hr {
-				match = false
-				break
-			}
-		}
-		if match {
-			highlightStart = i
+// writeText writes colored text into a bounded region [col, maxCol). Returns the next column position.
+func (e *Engine) writeText(row, col, maxCol int, text string, fgR, fgG, fgB, bgR, bgG, bgB uint8, bold bool) int {
+	for _, r := range text {
+		if col >= maxCol || col >= e.width {
 			break
 		}
-	}
-
-	for x := 0; x < e.width; x++ {
-		if x < len(runes) {
-			fgR, fgG, fgB := uint8(180), uint8(180), uint8(195)
-			bold := false
-			// Highlight player name
-			if highlightStart >= 0 && x >= highlightStart && x < highlightStart+len(highlightRunes) {
-				fgR, fgG, fgB = hR, hG, hB
-				bold = true
-			}
-			e.next[row][x] = Cell{Ch: runes[x], FgR: fgR, FgG: fgG, FgB: fgB, BgR: bgR, BgG: bgG, BgB: bgB, Bold: bold}
-		} else {
-			e.next[row][x] = Cell{Ch: ' ', BgR: bgR, BgG: bgG, BgB: bgB}
+		if row >= 0 && row < e.height && col >= 0 {
+			e.next[row][col] = Cell{Ch: r, FgR: fgR, FgG: fgG, FgB: fgB, BgR: bgR, BgG: bgG, BgB: bgB, Bold: bold}
 		}
+		col++
 	}
+	return col
 }
 
 func (e *Engine) writeHUDTextLine(row int, text string, fgR, fgG, fgB, bgR, bgG, bgB uint8) {

@@ -270,90 +270,42 @@ func (e *Engine) drawCenteredText(row int, text string, fgR, fgG, fgB, bgR, bgG,
 	}
 }
 
-// drawCombatHUD draws the bottom 5 rows during combat.
+// drawCombatHUD draws the bottom 4 rows during combat with two-column layout.
 func (e *Engine) drawCombatHUD(combat *CombatRenderData, viewerName string, viewerColor, totalPlayers int, stats HUDStats) {
 	hudY := e.height - HUDRows
 	if hudY < 0 {
 		return
 	}
 
+	splitCol := e.width / 2
+	bgR, bgG, bgB := uint8(20), uint8(15), uint8(22)
+
 	// Row 0: separator — red-tinted gradient
 	for x := 0; x < e.width; x++ {
 		t := uint8(60 - x*40/max(e.width, 1))
 		e.next[hudY][x] = Cell{
 			Ch: '━', FgR: 140 + t, FgG: 40 + t, FgB: 40 + t,
-			BgR: 20, BgG: 12, BgB: 15,
+			BgR: bgR, BgG: bgG, BgB: bgB,
 		}
 	}
 
-	// Row 1: viewer stat bars (HP, STA, MP)
-	statBgR, statBgG, statBgB := uint8(22), uint8(15), uint8(20)
-	for x := 0; x < e.width; x++ {
-		e.next[hudY+1][x] = Cell{Ch: ' ', BgR: statBgR, BgG: statBgG, BgB: statBgB}
-	}
-	hpNums := fmt.Sprintf("%d/%d", stats.HP, stats.MaxHP)
-	staNums := fmt.Sprintf("%d/%d", stats.Stamina, stats.MaxStamina)
-	mpNums := fmt.Sprintf("%d/%d", stats.MP, stats.MaxMP)
-	fixedCols := 1 + 7 + 6 + len(hpNums) + len(staNums) + len(mpNums) + 6
-	barWidth := (e.width - fixedCols) / 3
-	if barWidth < 4 {
-		barWidth = 4
-	}
-	col := 1
-	hpFillR, hpFillG, hpFillB := hpBarColor(stats.HP, stats.MaxHP)
-	col += e.drawStatBar(hudY+1, col, "HP", stats.HP, stats.MaxHP, barWidth,
-		255, 80, 80, hpFillR, hpFillG, hpFillB, statBgR, statBgG, statBgB)
-	col += 3
-	col += e.drawStatBar(hudY+1, col, "STA", stats.Stamina, stats.MaxStamina, barWidth,
-		240, 190, 60, 210, 170, 50, statBgR, statBgG, statBgB)
-	col += 3
-	e.drawStatBar(hudY+1, col, "MP", stats.MP, stats.MaxMP, barWidth,
-		100, 140, 255, 90, 110, 240, statBgR, statBgG, statBgB)
-
-	// Row 2: turn info
-	turnBgR, turnBgG, turnBgB := uint8(25), uint8(15), uint8(20)
-	for x := 0; x < e.width; x++ {
-		e.next[hudY+2][x] = Cell{Ch: ' ', BgR: turnBgR, BgG: turnBgG, BgB: turnBgB}
-	}
-
-	var turnInfo string
-	switch combat.Phase {
-	case cPhasePlayerTurn:
-		timerSec := combat.TurnTimer / 20 // TickRate
-		if combat.CurrentTurn == combat.ViewerID {
-			turnInfo = fmt.Sprintf(" YOUR TURN  Round %d  [%ds]", combat.Round, timerSec)
-		} else {
-			turnName := combat.CurrentTurn
-			for _, cp := range combat.Players {
-				if cp.ID == combat.CurrentTurn {
-					turnName = cp.Name
-					break
-				}
-			}
-			turnInfo = fmt.Sprintf(" %s's turn  Round %d  [%ds]", turnName, combat.Round, timerSec)
+	// Fill rows 1-3 with background and vertical separator
+	for row := 1; row <= 3; row++ {
+		y := hudY + row
+		if y >= e.height {
+			break
 		}
-	case cPhaseEnemyTurn, cPhaseEnemyActing:
-		turnInfo = fmt.Sprintf(" Enemy turn  Round %d", combat.Round)
-	case cPhaseVictory:
-		turnInfo = " VICTORY!"
-	case cPhaseDefeat:
-		turnInfo = " DEFEAT..."
-	default:
-		turnInfo = " Preparing..."
-	}
-	e.writeHUDTextLine(hudY+2, turnInfo, 220, 200, 180, turnBgR, turnBgG, turnBgB)
-
-	// Row 3: actions
-	actBgR, actBgG, actBgB := uint8(20), uint8(13), uint8(18)
-	for x := 0; x < e.width; x++ {
-		e.next[hudY+3][x] = Cell{Ch: ' ', BgR: actBgR, BgG: actBgG, BgB: actBgB}
+		for x := 0; x < e.width; x++ {
+			e.next[y][x] = Cell{Ch: ' ', BgR: bgR, BgG: bgG, BgB: bgB}
+		}
+		if splitCol > 0 && splitCol < e.width {
+			e.next[y][splitCol] = Cell{Ch: '│', FgR: 70, FgG: 40, FgB: 50, BgR: bgR, BgG: bgG, BgB: bgB}
+		}
 	}
 
-	// Row 4: navigation/status
-	navBgR, navBgG, navBgB := uint8(18), uint8(12), uint8(15)
-	for x := 0; x < e.width; x++ {
-		e.next[hudY+4][x] = Cell{Ch: ' ', BgR: navBgR, BgG: navBgG, BgB: navBgB}
-	}
+	row1 := hudY + 1
+	row2 := hudY + 2
+	row3 := hudY + 3
 
 	// Check if viewer is alive
 	viewerAlive := true
@@ -364,16 +316,65 @@ func (e *Engine) drawCombatHUD(combat *CombatRenderData, viewerName string, view
 		}
 	}
 
-	if !viewerAlive {
-		e.writeHUDTextLine(hudY+3, " SPECTATING", 120, 120, 135, actBgR, actBgG, actBgB)
-	} else if combat.Phase == cPhaseVictory || combat.Phase == cPhaseDefeat {
-		e.writeHUDTextLine(hudY+3, " Returning to overworld...", 140, 140, 155, actBgR, actBgG, actBgB)
-	} else if combat.CurrentTurn != combat.ViewerID {
-		e.writeHUDTextLine(hudY+3, " WAITING...", 120, 120, 135, actBgR, actBgG, actBgB)
-	} else {
-		e.writeHUDTextLine(hudY+3, " 1:Melee(5sta) 2:Ranged(2sta) 3:Magic(5mp) 4:Defend", 150, 150, 165, actBgR, actBgG, actBgB)
-		e.writeHUDTextLine(hudY+4, " \u2190\u2192:Target  Enter:Confirm", 130, 130, 145, navBgR, navBgG, navBgB)
+	// --- Left column ---
+	// Row 1: turn info
+	var turnInfo string
+	switch combat.Phase {
+	case cPhasePlayerTurn:
+		timerSec := combat.TurnTimer / 20
+		if combat.CurrentTurn == combat.ViewerID {
+			turnInfo = fmt.Sprintf("YOUR TURN  Round %d  [%ds]", combat.Round, timerSec)
+		} else {
+			turnName := combat.CurrentTurn
+			for _, cp := range combat.Players {
+				if cp.ID == combat.CurrentTurn {
+					turnName = cp.Name
+					break
+				}
+			}
+			turnInfo = fmt.Sprintf("%s's turn  Round %d  [%ds]", turnName, combat.Round, timerSec)
+		}
+	case cPhaseEnemyTurn, cPhaseEnemyActing:
+		turnInfo = fmt.Sprintf("Enemy turn  Round %d", combat.Round)
+	case cPhaseVictory:
+		turnInfo = "VICTORY!"
+	case cPhaseDefeat:
+		turnInfo = "DEFEAT..."
+	default:
+		turnInfo = "Preparing..."
 	}
+	e.writeText(row1, 1, splitCol, turnInfo, 220, 200, 180, bgR, bgG, bgB, false)
+
+	// Row 2-3: actions/status
+	if !viewerAlive {
+		e.writeText(row2, 1, splitCol, "SPECTATING", 120, 120, 135, bgR, bgG, bgB, false)
+	} else if combat.Phase == cPhaseVictory || combat.Phase == cPhaseDefeat {
+		e.writeText(row2, 1, splitCol, "Returning to overworld...", 140, 140, 155, bgR, bgG, bgB, false)
+	} else if combat.CurrentTurn != combat.ViewerID {
+		e.writeText(row2, 1, splitCol, "WAITING...", 120, 120, 135, bgR, bgG, bgB, false)
+	} else {
+		e.writeText(row2, 1, splitCol, "1:Melee 2:Ranged 3:Magic 4:Defend", 180, 180, 195, bgR, bgG, bgB, false)
+		e.writeText(row3, 1, splitCol, "←→:Target  Enter:Confirm", 130, 130, 145, bgR, bgG, bgB, false)
+	}
+
+	// --- Right column: stat bars ---
+	rightStart := splitCol + 2
+	hpNums := fmt.Sprintf("%d/%d", stats.HP, stats.MaxHP)
+	staNums := fmt.Sprintf("%d/%d", stats.Stamina, stats.MaxStamina)
+	mpNums := fmt.Sprintf("%d/%d", stats.MP, stats.MaxMP)
+	maxNumLen := max(len(hpNums), max(len(staNums), len(mpNums)))
+	barWidth := (e.width - rightStart) - 9 - maxNumLen
+	if barWidth < 4 {
+		barWidth = 4
+	}
+
+	hpFillR, hpFillG, hpFillB := hpBarColor(stats.HP, stats.MaxHP)
+	e.drawStatBar(row1, rightStart, "Health ", stats.HP, stats.MaxHP, barWidth,
+		255, 80, 80, hpFillR, hpFillG, hpFillB, bgR, bgG, bgB)
+	e.drawStatBar(row2, rightStart, "Stamina", stats.Stamina, stats.MaxStamina, barWidth,
+		240, 190, 60, 210, 170, 50, bgR, bgG, bgB)
+	e.drawStatBar(row3, rightStart, "Magic  ", stats.MP, stats.MaxMP, barWidth,
+		100, 140, 255, 90, 110, 240, bgR, bgG, bgB)
 }
 
 // emitDiff performs the buffer diff and produces ANSI output.
