@@ -14,6 +14,8 @@ const (
 	ActionDebugPage1
 	ActionDebugPage2
 	ActionDebugPage3
+	ActionConfirm
+	ActionDefend
 )
 
 // Direction the player is facing.
@@ -56,6 +58,53 @@ type Player struct {
 	MoveCooldown int // ticks until next move allowed
 	DebugView    bool
 	DebugPage    int
+
+	// Stats
+	HP, MaxHP           int
+	Stamina, MaxStamina int
+	MP, MaxMP           int
+	Attack, Defense     int
+	EXP                 int
+
+	// Combat state
+	FightID          int  // 0 = not in combat
+	CombatTransition int  // ticks remaining in transition effect
+	Defending        bool // halves incoming damage this round
+	Dead             bool // dead in current fight (spectating)
+	CombatAction     int  // selected action index (1-4)
+	CombatTarget     int  // selected enemy target index
+}
+
+// DefaultHP is the starting/max HP for new players.
+const DefaultHP = 30
+
+// DefaultStamina is the starting/max stamina for new players.
+const DefaultStamina = 20
+
+// DefaultMP is the starting/max MP for new players.
+const DefaultMP = 10
+
+// DefaultAttack is the starting attack stat.
+const DefaultAttack = 6
+
+// DefaultDefense is the starting defense stat.
+const DefaultDefense = 3
+
+// Level returns the player's level derived from EXP.
+func (p *Player) Level() int {
+	return p.EXP/50 + 1
+}
+
+// InitStats sets default stats for a new player.
+func (p *Player) InitStats() {
+	p.HP = DefaultHP
+	p.MaxHP = DefaultHP
+	p.Stamina = DefaultStamina
+	p.MaxStamina = DefaultStamina
+	p.MP = DefaultMP
+	p.MaxMP = DefaultMP
+	p.Attack = DefaultAttack
+	p.Defense = DefaultDefense
 }
 
 // PlayerSnapshot is a read-only copy of player state for rendering.
@@ -70,22 +119,42 @@ type PlayerSnapshot struct {
 	AnimFrame int
 	DebugView bool
 	DebugPage int
+
+	HP, MaxHP           int
+	Stamina, MaxStamina int
+	MP, MaxMP           int
+	EXP                 int
+	Level               int
+	FightID             int
+	CombatTransition    int
+	Dead                bool
 }
 
 // Snapshot returns a read-only copy of the player.
 func (p *Player) Snapshot() PlayerSnapshot {
 	return PlayerSnapshot{
-		ID:        p.ID,
-		Name:      p.Name,
-		X:         p.X,
-		Y:         p.Y,
-		Color:     p.Color,
-		MapName:   p.MapName,
-		Dir:       p.Dir,
-		Anim:      p.Anim,
-		AnimFrame: p.AnimFrame,
-		DebugView: p.DebugView,
-		DebugPage: p.DebugPage,
+		ID:               p.ID,
+		Name:             p.Name,
+		X:                p.X,
+		Y:                p.Y,
+		Color:            p.Color,
+		MapName:          p.MapName,
+		Dir:              p.Dir,
+		Anim:             p.Anim,
+		AnimFrame:        p.AnimFrame,
+		DebugView:        p.DebugView,
+		DebugPage:        p.DebugPage,
+		HP:               p.HP,
+		MaxHP:            p.MaxHP,
+		Stamina:          p.Stamina,
+		MaxStamina:       p.MaxStamina,
+		MP:               p.MP,
+		MaxMP:            p.MaxMP,
+		EXP:              p.EXP,
+		Level:            p.Level(),
+		FightID:          p.FightID,
+		CombatTransition: p.CombatTransition,
+		Dead:             p.Dead,
 	}
 }
 

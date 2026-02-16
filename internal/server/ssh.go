@@ -150,10 +150,59 @@ func (s *SSHServer) handleSession(sess ssh.Session) {
 					AnimFrame: p.AnimFrame,
 					DebugView: p.DebugView,
 					DebugPage: p.DebugPage,
+					HP:        p.HP,
+					MaxHP:     p.MaxHP,
+					Stamina:   p.Stamina,
+					MaxStamina: p.MaxStamina,
+					MP:        p.MP,
+					MaxMP:     p.MaxMP,
+					EXP:       p.EXP,
+					Level:     p.Level,
+					InCombat:  p.FightID != 0,
+					CombatTransition: p.CombatTransition,
 				}
 			}
 
-			output := engine.Render(playerID, state.Map.Map, players, w, h, state.World.Tick, state.World.TotalPlayers)
+			// Convert combat state if present
+			var combatData *render.CombatRenderData
+			if state.Combat != nil {
+				c := state.Combat
+				enemies := make([]render.CombatEnemy, len(c.Enemies))
+				for i, e := range c.Enemies {
+					enemies[i] = render.CombatEnemy{
+						Label: e.Label,
+						HP:    e.HP,
+						MaxHP: e.MaxHP,
+						ID:    e.ID,
+						Alive: e.Alive,
+					}
+				}
+				cPlayers := make([]render.CombatPlayer, len(c.Players))
+				for i, cp := range c.Players {
+					cPlayers[i] = render.CombatPlayer{
+						ID:       cp.ID,
+						Name:     cp.Name,
+						HP:       cp.HP,
+						MaxHP:    cp.MaxHP,
+						Alive:    cp.Alive,
+						Color:    cp.Color,
+						IsViewer: cp.IsViewer,
+					}
+				}
+				combatData = &render.CombatRenderData{
+					Phase:         int(c.Phase),
+					Round:         c.Round,
+					Enemies:       enemies,
+					Players:       cPlayers,
+					CurrentTurn:   c.CurrentTurn,
+					TurnTimer:     c.TurnTimer,
+					Log:           c.Log,
+					ViewerID:      c.ViewerID,
+					Transitioning: c.Transitioning,
+				}
+			}
+
+			output := engine.Render(playerID, state.Map.Map, players, w, h, state.World.Tick, state.World.TotalPlayers, combatData)
 			if len(output) > 0 {
 				io.WriteString(sess, render.SyncStart+output+render.SyncEnd)
 			}
@@ -204,6 +253,10 @@ func parseInput(data []byte) []game.Action {
 			actions = append(actions, game.ActionDebugPage2)
 		case '3':
 			actions = append(actions, game.ActionDebugPage3)
+		case '4':
+			actions = append(actions, game.ActionDefend)
+		case '\r', '\n': // Enter key
+			actions = append(actions, game.ActionConfirm)
 		case 3: // Ctrl-C
 			actions = append(actions, game.ActionQuit)
 		}

@@ -7,7 +7,7 @@ import (
 	"happy-place-2/internal/maps"
 )
 
-const HUDRows = 3
+const HUDRows = 5
 
 // Cell represents a single terminal cell with full RGB color.
 type Cell struct {
@@ -30,6 +30,47 @@ type PlayerInfo struct {
 	AnimFrame int // current animation frame
 	DebugView bool
 	DebugPage int
+
+	HP, MaxHP           int
+	Stamina, MaxStamina int
+	MP, MaxMP           int
+	EXP                 int
+	Level               int
+	InCombat            bool
+	CombatTransition    int
+}
+
+// CombatRenderData holds combat state for the renderer.
+type CombatRenderData struct {
+	Phase         int // maps to game.CombatPhase
+	Round         int
+	Enemies       []CombatEnemy
+	Players       []CombatPlayer
+	CurrentTurn   string // player ID whose turn it is
+	TurnTimer     int    // ticks remaining
+	Log           []string
+	ViewerID      string
+	Transitioning bool
+}
+
+// CombatEnemy is enemy data for rendering.
+type CombatEnemy struct {
+	Label string
+	HP    int
+	MaxHP int
+	ID    int
+	Alive bool
+}
+
+// CombatPlayer is player data for combat rendering.
+type CombatPlayer struct {
+	ID       string
+	Name     string
+	HP       int
+	MaxHP    int
+	Alive    bool
+	Color    int
+	IsViewer bool
 }
 
 // Engine is a per-session double-buffer diff renderer.
@@ -40,6 +81,7 @@ type Engine struct {
 	firstFrame    bool
 	lastDebugView bool
 	lastDebugPage int
+	lastInCombat  bool
 }
 
 // NewEngine creates a renderer for the given terminal dimensions.
@@ -82,6 +124,7 @@ func (e *Engine) Render(
 	termW, termH int,
 	tick uint64,
 	totalPlayers int,
+	combat *CombatRenderData,
 ) string {
 	if termW != e.width || termH != e.height {
 		e.Resize(termW, termH)
@@ -93,6 +136,10 @@ func (e *Engine) Render(
 	var viewerColor int
 	var viewerDebug bool
 	var viewerDebugPage int
+	var viewerHP, viewerMaxHP int
+	var viewerSTA, viewerMaxSTA int
+	var viewerMP, viewerMaxMP int
+	var viewerEXP, viewerLevel int
 	for _, p := range players {
 		if p.ID == viewerID {
 			viewerX = p.X
@@ -101,6 +148,14 @@ func (e *Engine) Render(
 			viewerColor = p.Color
 			viewerDebug = p.DebugView
 			viewerDebugPage = p.DebugPage
+			viewerHP = p.HP
+			viewerMaxHP = p.MaxHP
+			viewerSTA = p.Stamina
+			viewerMaxSTA = p.MaxStamina
+			viewerMP = p.MP
+			viewerMaxMP = p.MaxMP
+			viewerEXP = p.EXP
+			viewerLevel = p.Level
 			break
 		}
 	}
@@ -114,8 +169,25 @@ func (e *Engine) Render(
 		e.lastDebugPage = viewerDebugPage
 	}
 
+	inCombat := combat != nil
+	if inCombat != e.lastInCombat {
+		e.firstFrame = true
+		e.lastInCombat = inCombat
+	}
+
+	statsInfo := HUDStats{
+		HP: viewerHP, MaxHP: viewerMaxHP,
+		Stamina: viewerSTA, MaxStamina: viewerMaxSTA,
+		MP: viewerMP, MaxMP: viewerMaxMP,
+		EXP: viewerEXP, Level: viewerLevel,
+	}
+
 	if viewerDebug {
 		return e.renderDebugView(viewerColor, viewerDebugPage, tick)
+	}
+
+	if combat != nil {
+		return e.renderCombatView(combat, viewerName, viewerColor, totalPlayers, tick, statsInfo)
 	}
 
 	vp := NewViewport(viewerX, viewerY, termW, termH, tileMap.Width, tileMap.Height, HUDRows)
@@ -151,7 +223,7 @@ func (e *Engine) Render(
 	}
 
 	// Draw HUD
-	e.drawHUD(viewerName, viewerColor, totalPlayers, tileMap.Name)
+	e.drawHUD(viewerName, viewerColor, totalPlayers, tileMap.Name, statsInfo)
 
 	// Diff current vs next, emit only changed cells
 	var sb strings.Builder
@@ -206,17 +278,25 @@ func (e *Engine) stampSprite(sx, sy int, sprite Sprite, transparent bool) {
 	}
 }
 
+// HUDStats holds player stats for HUD display.
+type HUDStats struct {
+	HP, MaxHP           int
+	Stamina, MaxStamina int
+	MP, MaxMP           int
+	EXP                 int
+	Level               int
+}
+
 // --- HUD ---
 
-func (e *Engine) drawHUD(playerName string, playerColor, playerCount int, mapName string) {
+func (e *Engine) drawHUD(playerName string, playerColor, playerCount int, mapName string, stats HUDStats) {
 	hudY := e.height - HUDRows
 	if hudY < 0 {
 		return
 	}
 
-	// Row 1: separator — thin gradient line
+	// Row 0: separator — thin gradient line
 	for x := 0; x < e.width; x++ {
-		// Gradient from teal to dark
 		t := uint8(60 - x*40/max(e.width, 1))
 		e.next[hudY][x] = Cell{
 			Ch: '━', FgR: 40 + t, FgG: 70 + t, FgB: 90 + t,
@@ -224,32 +304,160 @@ func (e *Engine) drawHUD(playerName string, playerColor, playerCount int, mapNam
 		}
 	}
 
-	// Row 2: info bar
+	// Row 1: info bar — name, level, map, online count
 	barBgR, barBgG, barBgB := uint8(18), uint8(22), uint8(38)
-
-	// Fill bar background
 	for x := 0; x < e.width; x++ {
 		e.next[hudY+1][x] = Cell{Ch: ' ', BgR: barBgR, BgG: barBgG, BgB: barBgB}
 	}
-
-	// Build info line pieces
 	colorIdx := playerColor % len(PlayerBGColors)
 	pR, pG, pB := PlayerBGColors[colorIdx][0], PlayerBGColors[colorIdx][1], PlayerBGColors[colorIdx][2]
-	// Brighten for text use
 	pR = pR + (255-pR)/3
 	pG = pG + (255-pG)/3
 	pB = pB + (255-pB)/3
-
-	infoLine := fmt.Sprintf(" %s  \u2502  %s  \u2502  %d Online", playerName, mapName, playerCount)
+	infoLine := fmt.Sprintf(" %s  Lv %d  \u2502  %s  \u2502  %d Online",
+		playerName, stats.Level, mapName, playerCount)
 	e.writeHUDStyledLine(hudY+1, infoLine, barBgR, barBgG, barBgB, playerName, pR, pG, pB)
 
-	// Row 3: controls bar
-	ctrlBgR, ctrlBgG, ctrlBgB := uint8(15), uint8(18), uint8(30)
+	// Row 2: stat bars — HP, STA, MP (dynamically scaled to window width)
+	statBgR, statBgG, statBgB := uint8(15), uint8(18), uint8(30)
 	for x := 0; x < e.width; x++ {
-		e.next[hudY+2][x] = Cell{Ch: ' ', BgR: ctrlBgR, BgG: ctrlBgG, BgB: ctrlBgB}
+		e.next[hudY+2][x] = Cell{Ch: ' ', BgR: statBgR, BgG: statBgG, BgB: statBgB}
+	}
+	// Compute bar width: total width minus all fixed content, divided among 3 bars
+	// Fixed per bar: label + 1 space + 1 space + numText. Plus 3-col gaps between bars + 1 leading.
+	hpNums := fmt.Sprintf("%d/%d", stats.HP, stats.MaxHP)
+	staNums := fmt.Sprintf("%d/%d", stats.Stamina, stats.MaxStamina)
+	mpNums := fmt.Sprintf("%d/%d", stats.MP, stats.MaxMP)
+	// labels: "HP"(2) + "STA"(3) + "MP"(2) = 7
+	// spaces: 3 bars × 2 (before+after bar) = 6
+	// gaps: 2 × 3 = 6, leading: 1
+	fixedCols := 1 + 7 + 6 + len(hpNums) + len(staNums) + len(mpNums) + 6
+	barWidth := (e.width - fixedCols) / 3
+	if barWidth < 4 {
+		barWidth = 4
+	}
+	col := 1
+	hpFillR, hpFillG, hpFillB := hpBarColor(stats.HP, stats.MaxHP)
+	col += e.drawStatBar(hudY+2, col, "HP", stats.HP, stats.MaxHP, barWidth,
+		255, 80, 80, hpFillR, hpFillG, hpFillB, statBgR, statBgG, statBgB)
+	col += 3
+	col += e.drawStatBar(hudY+2, col, "STA", stats.Stamina, stats.MaxStamina, barWidth,
+		240, 190, 60, 210, 170, 50, statBgR, statBgG, statBgB)
+	col += 3
+	e.drawStatBar(hudY+2, col, "MP", stats.MP, stats.MaxMP, barWidth,
+		100, 140, 255, 90, 110, 240, statBgR, statBgG, statBgB)
+
+	// Row 3: EXP bar (dynamically scaled to window width)
+	expBgR, expBgG, expBgB := uint8(15), uint8(18), uint8(30)
+	for x := 0; x < e.width; x++ {
+		e.next[hudY+3][x] = Cell{Ch: ' ', BgR: expBgR, BgG: expBgG, BgB: expBgB}
+	}
+	expInLevel := stats.EXP % 50
+	lvText := fmt.Sprintf("Lv %d", stats.Level)
+	expNums := fmt.Sprintf("%d/%d", expInLevel, 50)
+	nextLv := fmt.Sprintf("\u2192 Lv %d", stats.Level+1)
+	// Fixed: 1 lead + lvText + 2 gap + "EXP"(3) + 1 space + 1 space + expNums + 2 gap + nextLv
+	expFixed := 1 + len(lvText) + 2 + 3 + 1 + 1 + len(expNums) + 2 + len(nextLv)
+	expBarWidth := e.width - expFixed
+	if expBarWidth < 4 {
+		expBarWidth = 4
+	}
+	col = 1
+	for _, r := range lvText {
+		if col < e.width {
+			e.next[hudY+3][col] = Cell{Ch: r, FgR: 100, FgG: 220, FgB: 220,
+				BgR: expBgR, BgG: expBgG, BgB: expBgB, Bold: true}
+		}
+		col++
+	}
+	col += 2
+	col += e.drawStatBar(hudY+3, col, "EXP", expInLevel, 50, expBarWidth,
+		60, 200, 180, 50, 190, 160, expBgR, expBgG, expBgB)
+	col += 2
+	for _, r := range nextLv {
+		if col < e.width {
+			e.next[hudY+3][col] = Cell{Ch: r, FgR: 80, FgG: 160, FgB: 160,
+				BgR: expBgR, BgG: expBgG, BgB: expBgB}
+		}
+		col++
+	}
+
+	// Row 4: controls bar
+	ctrlBgR, ctrlBgG, ctrlBgB := uint8(12), uint8(15), uint8(25)
+	for x := 0; x < e.width; x++ {
+		e.next[hudY+4][x] = Cell{Ch: ' ', BgR: ctrlBgR, BgG: ctrlBgG, BgB: ctrlBgB}
 	}
 	controls := " \u2190\u2191\u2193\u2192/WASD Move  \u2502  Q Quit"
-	e.writeHUDTextLine(hudY+2, controls, 130, 130, 145, ctrlBgR, ctrlBgG, ctrlBgB)
+	e.writeHUDTextLine(hudY+4, controls, 130, 130, 145, ctrlBgR, ctrlBgG, ctrlBgB)
+}
+
+// hpBarColor returns the fill color for an HP bar based on current/max ratio.
+func hpBarColor(current, maxHP int) (uint8, uint8, uint8) {
+	if maxHP <= 0 {
+		return 80, 80, 90
+	}
+	ratio := float64(current) / float64(maxHP)
+	if ratio > 0.5 {
+		return 70, 210, 70
+	} else if ratio > 0.25 {
+		return 220, 200, 40
+	}
+	return 220, 60, 40
+}
+
+// drawStatBar draws a labeled stat bar with fill. Returns columns consumed.
+func (e *Engine) drawStatBar(row, col int, label string, current, maximum, barWidth int,
+	labelR, labelG, labelB, fillR, fillG, fillB, bgR, bgG, bgB uint8) int {
+	startCol := col
+
+	// Label
+	for _, r := range label {
+		if col < e.width && row >= 0 && row < e.height {
+			e.next[row][col] = Cell{Ch: r, FgR: labelR, FgG: labelG, FgB: labelB,
+				BgR: bgR, BgG: bgG, BgB: bgB, Bold: true}
+		}
+		col++
+	}
+	col++ // space
+
+	// Bar
+	filled := 0
+	if maximum > 0 {
+		filled = barWidth * current / maximum
+	}
+	if filled < 0 {
+		filled = 0
+	}
+	if filled > barWidth {
+		filled = barWidth
+	}
+	for i := 0; i < barWidth; i++ {
+		x := col + i
+		if x >= e.width || row < 0 || row >= e.height {
+			break
+		}
+		if i < filled {
+			e.next[row][x] = Cell{Ch: '\u2588', FgR: fillR, FgG: fillG, FgB: fillB,
+				BgR: bgR, BgG: bgG, BgB: bgB}
+		} else {
+			e.next[row][x] = Cell{Ch: '\u2591', FgR: 45, FgG: 45, FgB: 55,
+				BgR: bgR, BgG: bgG, BgB: bgB}
+		}
+	}
+	col += barWidth
+	col++ // space
+
+	// Numbers
+	numText := fmt.Sprintf("%d/%d", current, maximum)
+	for _, r := range numText {
+		if col < e.width && row >= 0 && row < e.height {
+			e.next[row][col] = Cell{Ch: r, FgR: 180, FgG: 180, FgB: 195,
+				BgR: bgR, BgG: bgG, BgB: bgB}
+		}
+		col++
+	}
+
+	return col - startCol
 }
 
 func (e *Engine) writeHUDStyledLine(row int, text string, bgR, bgG, bgB uint8, highlight string, hR, hG, hB uint8) {
