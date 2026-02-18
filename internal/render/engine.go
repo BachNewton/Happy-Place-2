@@ -652,7 +652,7 @@ func (e *Engine) renderDebugView(viewerColor, page int, tick uint64) string {
 		}
 	}
 
-	pageNames := []string{"Tiles", "Connected", "Players"}
+	pageNames := []string{"Tiles", "Connected/Blob", "Players"}
 	if page < 0 || page >= len(pageNames) {
 		page = 0
 	}
@@ -706,9 +706,9 @@ func (e *Engine) renderDebugView(viewerColor, page int, tick uint64) string {
 	var labels []labelInfo
 
 	switch page {
-	case 0: // Non-connected tile sprites
+	case 0: // Simple tile sprites (non-connected, non-blob)
 		for _, name := range pixelTileNames(e.sprites) {
-			if e.sprites.TileIsConnected(name) {
+			if e.sprites.TileIsConnected(name) || e.sprites.TileIsBlob(name) {
 				continue
 			}
 
@@ -735,29 +735,29 @@ func (e *Engine) renderDebugView(viewerColor, page int, tick uint64) string {
 			}
 		}
 
-	case 1: // Connected tile sprites — practical preview
-		pattern := [][]bool{
+	case 1: // Connected + Blob tile sprites — practical preview
+		connPattern := [][]bool{
 			{false, true, true, true, true, true, false},
 			{false, true, false, true, false, true, false},
 			{false, true, true, true, true, true, false},
 			{false, false, false, true, false, false, false},
 			{false, false, false, true, false, false, false},
 		}
-		patH := len(pattern)
-		patW := len(pattern[0])
+		connPatH := len(connPattern)
+		connPatW := len(connPattern[0])
 
-		patMask := func(px, py int) uint8 {
+		connPatMask := func(px, py int) uint8 {
 			var mask uint8
-			if py > 0 && pattern[py-1][px] {
+			if py > 0 && connPattern[py-1][px] {
 				mask |= ConnN
 			}
-			if px+1 < patW && pattern[py][px+1] {
+			if px+1 < connPatW && connPattern[py][px+1] {
 				mask |= ConnE
 			}
-			if py+1 < patH && pattern[py+1][px] {
+			if py+1 < connPatH && connPattern[py+1][px] {
 				mask |= ConnS
 			}
-			if px > 0 && pattern[py][px-1] {
+			if px > 0 && connPattern[py][px-1] {
 				mask |= ConnW
 			}
 			return mask
@@ -780,12 +780,12 @@ func (e *Engine) renderDebugView(viewerColor, page int, tick uint64) string {
 			labels = append(labels, labelInfo{curY, curX, "preview"})
 			gridY := curY + 1
 
-			for py := 0; py < patH; py++ {
-				for px := 0; px < patW; px++ {
+			for py := 0; py < connPatH; py++ {
+				for px := 0; px < connPatW; px++ {
 					screenX := curX + px*CharTileW
 					screenY := gridY + py*CharTileH
-					if pattern[py][px] {
-						mask := patMask(px, py)
+					if connPattern[py][px] {
+						mask := connPatMask(px, py)
 						sprite := e.sprites.GetConnectedTileSprite(name, mask)
 						stampAt(screenX, screenY, sprite, false)
 					} else {
@@ -795,7 +795,97 @@ func (e *Engine) renderDebugView(viewerColor, page int, tick uint64) string {
 				}
 			}
 
-			curY = gridY + patH*CharTileH + 1
+			curY = gridY + connPatH*CharTileH + 1
+			curX = 0
+		}
+
+		// Blob tiles — 8-neighbor-aware preview
+		blobPattern := [][]bool{
+			{false, false, true, true, true, false, false},
+			{false, true, true, true, true, true, false},
+			{false, true, true, true, true, true, false},
+			{false, true, true, false, true, true, false},
+			{false, true, true, true, true, true, false},
+			{false, false, true, true, true, false, false},
+		}
+		blobPatH := len(blobPattern)
+		blobPatW := len(blobPattern[0])
+
+		blobPatMask := func(px, py int) uint8 {
+			check := func(dx, dy int) bool {
+				nx, ny := px+dx, py+dy
+				if nx < 0 || nx >= blobPatW || ny < 0 || ny >= blobPatH {
+					return false
+				}
+				return blobPattern[ny][nx]
+			}
+
+			var mask uint8
+			n := check(0, -1)
+			e := check(1, 0)
+			s := check(0, 1)
+			w := check(-1, 0)
+
+			if n {
+				mask |= BlobN
+			}
+			if e {
+				mask |= BlobE
+			}
+			if s {
+				mask |= BlobS
+			}
+			if w {
+				mask |= BlobW
+			}
+			if n && e && check(1, -1) {
+				mask |= BlobNE
+			}
+			if s && e && check(1, 1) {
+				mask |= BlobSE
+			}
+			if s && w && check(-1, 1) {
+				mask |= BlobSW
+			}
+			if n && w && check(-1, -1) {
+				mask |= BlobNW
+			}
+			return mask
+		}
+
+		for _, name := range pixelTileNames(e.sprites) {
+			if !e.sprites.TileIsBlob(name) {
+				continue
+			}
+
+			// Sample sprite (center)
+			sx, sy := placeGroup(name, CharTileW)
+			labels = append(labels, labelInfo{sy, sx, name})
+			sprite := e.sprites.GetBlobTileSprite(name, 0xFF) // all neighbors = center
+			stampAt(sx, sy+1, sprite, false)
+
+			// Practical preview grid
+			curX = 0
+			curY += charRowH
+			labels = append(labels, labelInfo{curY, curX, "preview"})
+			gridY := curY + 1
+
+			for py := 0; py < blobPatH; py++ {
+				for px := 0; px < blobPatW; px++ {
+					screenX := curX + px*CharTileW
+					screenY := gridY + py*CharTileH
+					if blobPattern[py][px] {
+						mask := blobPatMask(px, py)
+						sprite := e.sprites.GetBlobTileSprite(name, mask)
+						stampAt(screenX, screenY, sprite, false)
+					} else {
+						grassTS := e.sprites.GetTileSprites("grass", tick)
+						stampAt(screenX, screenY, grassTS.Base, false)
+					}
+				}
+			}
+
+			curY = gridY + blobPatH*CharTileH + 1
 			curX = 0
 		}
 

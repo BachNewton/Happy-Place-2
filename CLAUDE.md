@@ -73,6 +73,7 @@ docs/procgen.md             # Procedural generation design & reference
 - **SpriteRegistry:** Loaded at startup from `assets/sprites/`. Holds all tile and player PixelSprites. Player sprites are palette-swapped from templates (shirt `#FF0000` → player color, pants `#AA0000` → darkened).
 - **HUD:** The bottom 4 rows of the terminal (`HUDRows = 4`), rendered character-based directly into `next[][]` after pixel buffer collapse.
 - **Buffers (`current` / `next`):** The double-buffer system. `next` is built each frame, diffed against `current`, and only changed cells are emitted as ANSI output.
+- **Blob tileset (autotile):** A tile type that adapts its appearance based on 8 surrounding neighbors. Uses 13 source sprites (center, 4 edges, 4 outer corners, 4 inner corners) to generate all 256 possible neighbor configurations at load time. Diagonal neighbors are gated by adjacent cardinals. Used by water; generic system for cliff/path reuse.
 - **Debug view:** An alternate full-screen view (toggled with `` ` ``) showing all pixel sprites collapsed via half-block rendering.
 
 ### Sprite PNG Naming Conventions
@@ -82,6 +83,7 @@ Sprites are loaded from `assets/sprites/tiles/` and `assets/sprites/players/`:
 - **Animated:** `water_0_f0.png`, `water_0_f1.png` (tile_variant_fN.png)
 - **Tall:** `tree_0_base.png`, `tree_0_dy1.png`, `tree_0_dy2.png`
 - **Connected:** `fence_0_0000.png` through `fence_0_1111.png` (NESW bitmask)
+- **Blob (autotile):** `water_0_blob_center.png`, `water_0_blob_edge_n.png`, `water_0_blob_outer_nw.png`, `water_0_blob_inner_nw.png` — 13 named parts (center, 4 edges, 4 outer corners, 4 inner corners). Uses 8-neighbor awareness with diagonal gating. All 256 mask variants are pre-composited at load time.
 - **Player:** `player_down.png`, `player_up.png`, `player_left.png`, `player_right.png`
 
 Transparent pixels: alpha < 50% or magenta `#FF00FF`.
@@ -132,7 +134,7 @@ Maps are JSON files in `assets/maps/`. See `town.json` for the format. The legen
 |------|----------|-------|
 | grass | yes | 4 variants, animated sway |
 | wall | yes | 4 variants, mortar lines |
-| water | no | Animated waves, position-aware |
+| water | no | Blob autotile (8-neighbor edges/corners) |
 | tree | no | 4 variants, canopy + trunk |
 | path | yes | 4 variants, worn center + pebbles |
 | door | yes | Plank lines + doorknob |

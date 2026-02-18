@@ -13,6 +13,11 @@ func PixelTileSprite(reg *SpriteRegistry, tile maps.TileDef, wx, wy int, tick ui
 		return PixelTileSprites{Base: FillPixelSprite(fgR, fgG, fgB)}
 	}
 
+	if reg.TileIsBlob(name) {
+		mask := blobNeighborMask(name, wx, wy, m)
+		return PixelTileSprites{Base: reg.GetBlobTileSprite(name, mask)}
+	}
+
 	if reg.TileIsConnected(name) {
 		mask := neighborMask(name, wx, wy, m)
 		return PixelTileSprites{Base: reg.GetConnectedTileSprite(name, mask)}

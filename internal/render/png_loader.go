@@ -56,11 +56,16 @@ type tileData struct {
 	parts map[string]map[int]PixelSprite
 	// For connected tiles: mask -> PixelSprite
 	connected map[string]PixelSprite
+	// For blob tiles: part name -> sprite (13 named parts)
+	blob map[string]PixelSprite
+	// For blob tiles: 8-bit mask -> precomputed composite sprite
+	blobComposite map[uint8]PixelSprite
 
 	frames      int // max frame count
 	hasBase     bool
 	hasDY       map[int]bool // which DY values exist
 	isConnected bool
+	isBlob      bool
 }
 
 // SpriteRegistry holds all loaded pixel sprites.
@@ -82,6 +87,9 @@ func NewSpriteRegistry(spritesDir string) (*SpriteRegistry, error) {
 	if err := reg.loadTiles(tilesDir); err != nil {
 		return nil, fmt.Errorf("load tiles: %w", err)
 	}
+
+	// Generate blob composites for all blob tile types
+	reg.generateBlobComposites()
 
 	// Load player sprites and generate palette swaps
 	if err := reg.loadPlayers(playersDir); err != nil {
@@ -146,6 +154,14 @@ func (reg *SpriteRegistry) parseTileSprite(name string, sprite PixelSprite) {
 		if parts[i] == "base" || strings.HasPrefix(parts[i], "dy") {
 			continue
 		}
+		if parts[i] == "blob" || parts[i] == "edge" || parts[i] == "outer" || parts[i] == "inner" || parts[i] == "center" {
+			continue
+		}
+		// Cardinal/ordinal suffixes used in blob part names
+		if parts[i] == "n" || parts[i] == "s" || parts[i] == "e" || parts[i] == "w" ||
+			parts[i] == "nw" || parts[i] == "ne" || parts[i] == "sw" || parts[i] == "se" {
+			continue
+		}
 		if len(parts[i]) == 4 && isConnectionMask(parts[i]) {
 			continue
 		}
@@ -161,15 +177,25 @@ func (reg *SpriteRegistry) parseTileSprite(name string, sprite PixelSprite) {
 	td := reg.tiles[tileName]
 	if td == nil {
 		td = &tileData{
-			sprites:   make(map[int]PixelSprite),
-			parts:     make(map[string]map[int]PixelSprite),
-			connected: make(map[string]PixelSprite),
-			hasDY:     make(map[int]bool),
+			sprites:       make(map[int]PixelSprite),
+			parts:         make(map[string]map[int]PixelSprite),
+			connected:     make(map[string]PixelSprite),
+			blob:          make(map[string]PixelSprite),
+			blobComposite: make(map[uint8]PixelSprite),
+			hasDY:         make(map[int]bool),
 		}
 		reg.tiles[tileName] = td
 	}
 
 	remaining := parts[varIdx+1:]
+
+	// Blob tile: water_0_blob_edge_n.png -> partName = "edge_n"
+	if len(remaining) >= 2 && remaining[0] == "blob" {
+		partName := strings.Join(remaining[1:], "_")
+		td.isBlob = true
+		td.blob[partName] = sprite
+		return
+	}
 
 	if len(remaining) == 0 {
 		// Simple: grass_0.png
@@ -352,6 +378,169 @@ func (reg *SpriteRegistry) TileIsConnected(name string) bool {
 		return false
 	}
 	return td.isConnected
+}
+
+// TileIsBlob returns whether a tile type uses blob (autotile) sprites.
+func (reg *SpriteRegistry) TileIsBlob(name string) bool {
+	td := reg.tiles[name]
+	if td == nil {
+		return false
+	}
+	return td.isBlob
+}
+
+// GetBlobTileSprite returns a precomputed composite sprite for the given 8-bit neighbor mask.
+func (reg *SpriteRegistry) GetBlobTileSprite(tileName string, mask uint8) PixelSprite {
+	td := reg.tiles[tileName]
+	if td == nil {
+		return FillPixelSprite(255, 0, 255)
+	}
+	if s, ok := td.blobComposite[mask]; ok {
+		return s
+	}
+	// Fallback to center
+	if s, ok := td.blob["center"]; ok {
+		return s
+	}
+	return FillPixelSprite(255, 0, 255)
+}
+
+// blobMaskToParts returns the blob part names needed for a given 8-bit mask.
+// Returns a single part for simple cases, or multiple inner corner parts
+// that need to be composited onto the center.
+func blobMaskToParts(mask uint8) []string {
+	n := mask&BlobN != 0
+	e := mask&BlobE != 0
+	s := mask&BlobS != 0
+	w := mask&BlobW != 0
+	ne := mask&BlobNE != 0
+	se := mask&BlobSE != 0
+	sw := mask&BlobSW != 0
+	nw := mask&BlobNW != 0
+
+	// Count missing cardinals
+	missingCardinals := 0
+	if !n {
+		missingCardinals++
+	}
+	if !e {
+		missingCardinals++
+	}
+	if !s {
+		missingCardinals++
+	}
+	if !w {
+		missingCardinals++
+	}
+
+	switch {
+	case missingCardinals >= 3:
+		// Peninsula or isolated — use center as fallback
+		return []string{"center"}
+
+	case missingCardinals == 2:
+		// Two adjacent missing cardinals → outer corner
+		// Two opposite missing → use center fallback
+		if !n && !w {
+			return []string{"outer_nw"}
+		}
+		if !n && !e {
+			return []string{"outer_ne"}
+		}
+		if !s && !w {
+			return []string{"outer_sw"}
+		}
+		if !s && !e {
+			return []string{"outer_se"}
+		}
+		// Opposite missing (N+S or E+W) — center fallback
+		return []string{"center"}
+
+	case missingCardinals == 1:
+		// One cardinal missing → edge
+		if !n {
+			return []string{"edge_n"}
+		}
+		if !e {
+			return []string{"edge_e"}
+		}
+		if !s {
+			return []string{"edge_s"}
+		}
+		if !w {
+			return []string{"edge_w"}
+		}
+
+	default:
+		// All cardinals present — check diagonals for inner corners
+		var parts []string
+		if !nw {
+			parts = append(parts, "inner_nw")
+		}
+		if !ne {
+			parts = append(parts, "inner_ne")
+		}
+		if !sw {
+			parts = append(parts, "inner_sw")
+		}
+		if !se {
+			parts = append(parts, "inner_se")
+		}
+		if len(parts) == 0 {
+			return []string{"center"}
+		}
+		return parts
+	}
+
+	return []string{"center"}
+}
+
+// generateBlobComposites pre-generates all 256 possible blob tile masks.
+func (reg *SpriteRegistry) generateBlobComposites() {
+	for _, td := range reg.tiles {
+		if !td.isBlob {
+			continue
+		}
+
+		center, hasCenter := td.blob["center"]
+		if !hasCenter {
+			continue
+		}
+
+		for mask := 0; mask < 256; mask++ {
+			m := uint8(mask)
+			parts := blobMaskToParts(m)
+
+			if len(parts) == 1 {
+				if s, ok := td.blob[parts[0]]; ok {
+					td.blobComposite[m] = s
+				} else {
+					td.blobComposite[m] = center
+				}
+				continue
+			}
+
+			// Multi-part composite: start with center, overlay inner corners
+			composite := center
+			for _, partName := range parts {
+				inner, ok := td.blob[partName]
+				if !ok {
+					continue
+				}
+				// Overlay: where inner differs from center, use inner pixel
+				for y := 0; y < PixelTileH; y++ {
+					for x := 0; x < PixelTileW; x++ {
+						ip := inner[y][x]
+						cp := center[y][x]
+						if ip != cp {
+							composite[y][x] = ip
+						}
+					}
+				}
+			}
+			td.blobComposite[m] = composite
+		}
+	}
 }
 
 // loadPlayers loads the 4 direction templates and generates palette swaps.
