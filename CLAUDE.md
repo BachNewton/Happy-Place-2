@@ -136,7 +136,7 @@ Maps are JSON files in `assets/maps/`. See `town.json` for the format. The legen
 | wall | yes | 4 variants, mortar lines |
 | water | no | Blob autotile (8-neighbor edges/corners) |
 | tree | no | 4 variants, canopy + trunk |
-| path | yes | 4 variants, worn center + pebbles |
+| path | yes | Blob autotile (8-neighbor edges/corners) |
 | door | yes | Plank lines + doorknob |
 | floor | yes | 4 variants, wood grain |
 | fence | no | Connected tile (adapts to neighbors) |
