@@ -706,38 +706,28 @@ func (e *Engine) renderDebugView(viewerColor, page int, tick uint64) string {
 	var labels []labelInfo
 
 	switch page {
-	case 0: // Non-connected tile sprites with variants
+	case 0: // Non-connected tile sprites
 		for _, name := range pixelTileNames(e.sprites) {
 			if e.sprites.TileIsConnected(name) {
 				continue
 			}
-			variants := e.sprites.TileVariants(name)
-			if variants == 0 {
-				continue
-			}
 
-			// Check for tall tile (has overlays)
-			sample := e.sprites.GetTileSprites(name, 0, tick)
+			ts := e.sprites.GetTileSprites(name, tick)
 			maxDY := 0
-			for _, ov := range sample.Overlays {
+			for _, ov := range ts.Overlays {
 				if ov.DY > maxDY {
 					maxDY = ov.DY
 				}
 			}
 			overlayCharRows := maxDY * CharTileH
 
-			groupWidth := variants*CharTileW + (variants-1)*gap
-			sx, sy := placeGroup(name, groupWidth)
+			sx, sy := placeGroup(name, CharTileW)
 			labels = append(labels, labelInfo{sy, sx, name})
 
-			for v := 0; v < variants; v++ {
-				ts := e.sprites.GetTileSprites(name, uint(v), tick)
-				baseX := sx + v*(CharTileW+gap)
-				baseY := sy + 1 + overlayCharRows
-				stampAt(baseX, baseY, ts.Base, false)
-				for _, ov := range ts.Overlays {
-					stampAt(baseX, baseY-ov.DY*CharTileH, ov.Sprite, true)
-				}
+			baseY := sy + 1 + overlayCharRows
+			stampAt(sx, baseY, ts.Base, false)
+			for _, ov := range ts.Overlays {
+				stampAt(sx, baseY-ov.DY*CharTileH, ov.Sprite, true)
 			}
 
 			if overlayCharRows > 0 {
@@ -777,16 +767,12 @@ func (e *Engine) renderDebugView(viewerColor, page int, tick uint64) string {
 			if !e.sprites.TileIsConnected(name) {
 				continue
 			}
-			variants := e.sprites.TileVariants(name)
 
-			// Variant row
-			groupWidth := variants*CharTileW + (variants-1)*gap
-			sx, sy := placeGroup(name, groupWidth)
+			// Sample sprite
+			sx, sy := placeGroup(name, CharTileW)
 			labels = append(labels, labelInfo{sy, sx, name})
-			for v := 0; v < variants; v++ {
-				sprite := e.sprites.GetConnectedTileSprite(name, ConnE|ConnW, uint(v))
-				stampAt(sx+v*(CharTileW+gap), sy+1, sprite, false)
-			}
+			sprite := e.sprites.GetConnectedTileSprite(name, ConnE|ConnW)
+			stampAt(sx, sy+1, sprite, false)
 
 			// Practical preview grid
 			curX = 0
@@ -800,11 +786,10 @@ func (e *Engine) renderDebugView(viewerColor, page int, tick uint64) string {
 					screenY := gridY + py*CharTileH
 					if pattern[py][px] {
 						mask := patMask(px, py)
-						v := TileHash(px, py) % uint(variants)
-						sprite := e.sprites.GetConnectedTileSprite(name, mask, v)
+						sprite := e.sprites.GetConnectedTileSprite(name, mask)
 						stampAt(screenX, screenY, sprite, false)
 					} else {
-						grassTS := e.sprites.GetTileSprites("grass", TileHash(px, py)%4, tick)
+						grassTS := e.sprites.GetTileSprites("grass", tick)
 						stampAt(screenX, screenY, grassTS.Base, false)
 					}
 				}

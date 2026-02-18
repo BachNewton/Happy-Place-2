@@ -2,12 +2,6 @@ package render
 
 import "happy-place-2/internal/maps"
 
-// TileHash maps world coordinates to a deterministic pseudo-random value.
-// Used for variant selection: TileHash(wx, wy) % variants.
-func TileHash(wx, wy int) uint {
-	return uint(wx*7 + wy*13)
-}
-
 // Connection bitmask constants for connected tiles.
 const (
 	ConnN uint8 = 1
@@ -41,6 +35,5 @@ func neighborMask(name string, wx, wy int, m *maps.Map) uint8 {
 // Matches the order from the original tileList.
 var tileNameOrder = []string{
 	"grass", "wall", "water", "tree", "path", "door", "floor",
-	"fence", "flowers", "sand", "tall_grass", "rock",
-	"shallow_water", "dirt", "bridge",
+	"fence", "flowers", "tall_grass",
 }

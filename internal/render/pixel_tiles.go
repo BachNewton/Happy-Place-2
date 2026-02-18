@@ -3,7 +3,7 @@ package render
 import "happy-place-2/internal/maps"
 
 // PixelTileSprite returns the pixel sprites for a tile at world position (wx,wy) at the given tick.
-// For connected tiles, it computes the neighbor mask. For others, it uses variant selection via TileHash.
+// For connected tiles, it computes the neighbor mask.
 func PixelTileSprite(reg *SpriteRegistry, tile maps.TileDef, wx, wy int, tick uint64, m *maps.Map) PixelTileSprites {
 	name := tile.Name
 
@@ -15,11 +15,8 @@ func PixelTileSprite(reg *SpriteRegistry, tile maps.TileDef, wx, wy int, tick ui
 
 	if reg.TileIsConnected(name) {
 		mask := neighborMask(name, wx, wy, m)
-		v := TileHash(wx, wy) % uint(reg.TileVariants(name))
-		base := reg.GetConnectedTileSprite(name, mask, v)
-		return PixelTileSprites{Base: base}
+		return PixelTileSprites{Base: reg.GetConnectedTileSprite(name, mask)}
 	}
 
-	v := TileHash(wx, wy) % uint(reg.TileVariants(name))
-	return reg.GetTileSprites(name, v, tick)
+	return reg.GetTileSprites(name, tick)
 }

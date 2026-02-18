@@ -48,31 +48,19 @@ func LoadPixelSprite(path string) (PixelSprite, error) {
 	return ps, nil
 }
 
-// tileAnimKey uniquely identifies a tile variant+frame combination.
-type tileAnimKey struct {
-	variant int
-	frame   int
-}
-
 // tileData holds all loaded sprites for a single tile type.
 type tileData struct {
-	// For simple/animated tiles: variant -> frame -> PixelSprite
-	sprites map[tileAnimKey]PixelSprite
-	// For tall tiles: variant -> part name -> frame -> PixelSprite
-	parts map[string]map[tileAnimKey]PixelSprite
-	// For connected tiles: variant -> mask -> PixelSprite
-	connected map[tileConnKey]PixelSprite
+	// For simple/animated tiles: frame -> PixelSprite
+	sprites map[int]PixelSprite
+	// For tall tiles: part name -> frame -> PixelSprite
+	parts map[string]map[int]PixelSprite
+	// For connected tiles: mask -> PixelSprite
+	connected map[string]PixelSprite
 
-	variants   int
-	frames     int // max frame count across variants
-	hasBase    bool
-	hasDY      map[int]bool // which DY values exist
+	frames      int // max frame count
+	hasBase     bool
+	hasDY       map[int]bool // which DY values exist
 	isConnected bool
-}
-
-type tileConnKey struct {
-	variant int
-	mask    string // "0000" through "1111"
 }
 
 // SpriteRegistry holds all loaded pixel sprites.
@@ -136,15 +124,13 @@ func (reg *SpriteRegistry) loadTiles(dir string) error {
 }
 
 // parseTileSprite parses a filename and stores the sprite in the registry.
+// Filenames follow the pattern: tilename_0[_suffix].png where 0 is the variant number (always 0).
 func (reg *SpriteRegistry) parseTileSprite(name string, sprite PixelSprite) {
 	parts := strings.Split(name, "_")
 	if len(parts) < 2 {
 		return
 	}
 
-	// Determine tile name: everything up to the variant number
-	// e.g., "tall_grass_0" -> tile="tall_grass", variant=0
-	// e.g., "grass_0" -> tile="grass", variant=0
 	// Find the variant index (first numeric-only part from the end)
 	varIdx := -1
 	for i := len(parts) - 1; i >= 1; i-- {
@@ -152,17 +138,14 @@ func (reg *SpriteRegistry) parseTileSprite(name string, sprite PixelSprite) {
 			varIdx = i
 			break
 		}
-		// Check for frame suffix like "f0"
 		if strings.HasPrefix(parts[i], "f") {
 			if _, err := strconv.Atoi(parts[i][1:]); err == nil {
-				continue // skip frame part, keep looking for variant
+				continue
 			}
 		}
-		// Check for tall tile parts (base, dy1, dy2)
 		if parts[i] == "base" || strings.HasPrefix(parts[i], "dy") {
 			continue
 		}
-		// Check for connected tile mask (4 chars of 0/1)
 		if len(parts[i]) == 4 && isConnectionMask(parts[i]) {
 			continue
 		}
@@ -170,33 +153,27 @@ func (reg *SpriteRegistry) parseTileSprite(name string, sprite PixelSprite) {
 	}
 
 	if varIdx == -1 {
-		return // can't determine variant
+		return
 	}
 
 	tileName := strings.Join(parts[:varIdx], "_")
-	variant, _ := strconv.Atoi(parts[varIdx])
 
 	td := reg.tiles[tileName]
 	if td == nil {
 		td = &tileData{
-			sprites:   make(map[tileAnimKey]PixelSprite),
-			parts:     make(map[string]map[tileAnimKey]PixelSprite),
-			connected: make(map[tileConnKey]PixelSprite),
+			sprites:   make(map[int]PixelSprite),
+			parts:     make(map[string]map[int]PixelSprite),
+			connected: make(map[string]PixelSprite),
 			hasDY:     make(map[int]bool),
 		}
 		reg.tiles[tileName] = td
 	}
 
-	if variant+1 > td.variants {
-		td.variants = variant + 1
-	}
-
-	// Parse remaining parts after variant
 	remaining := parts[varIdx+1:]
 
 	if len(remaining) == 0 {
 		// Simple: grass_0.png
-		td.sprites[tileAnimKey{variant: variant, frame: 0}] = sprite
+		td.sprites[0] = sprite
 		if td.frames < 1 {
 			td.frames = 1
 		}
@@ -219,7 +196,7 @@ func (reg *SpriteRegistry) parseTileSprite(name string, sprite PixelSprite) {
 
 	if hasFrame && len(remaining) == 0 {
 		// Animated: water_0_f0.png
-		td.sprites[tileAnimKey{variant: variant, frame: frame}] = sprite
+		td.sprites[frame] = sprite
 		if frame+1 > td.frames {
 			td.frames = frame + 1
 		}
@@ -232,7 +209,7 @@ func (reg *SpriteRegistry) parseTileSprite(name string, sprite PixelSprite) {
 		// Connected: fence_0_0000.png
 		if len(part) == 4 && isConnectionMask(part) {
 			td.isConnected = true
-			td.connected[tileConnKey{variant: variant, mask: part}] = sprite
+			td.connected[part] = sprite
 			return
 		}
 
@@ -241,10 +218,10 @@ func (reg *SpriteRegistry) parseTileSprite(name string, sprite PixelSprite) {
 			td.hasBase = true
 			partMap := td.parts["base"]
 			if partMap == nil {
-				partMap = make(map[tileAnimKey]PixelSprite)
+				partMap = make(map[int]PixelSprite)
 				td.parts["base"] = partMap
 			}
-			partMap[tileAnimKey{variant: variant, frame: frame}] = sprite
+			partMap[frame] = sprite
 			return
 		}
 
@@ -254,10 +231,10 @@ func (reg *SpriteRegistry) parseTileSprite(name string, sprite PixelSprite) {
 				td.hasDY[dy] = true
 				partMap := td.parts[part]
 				if partMap == nil {
-					partMap = make(map[tileAnimKey]PixelSprite)
+					partMap = make(map[int]PixelSprite)
 					td.parts[part] = partMap
 				}
-				partMap[tileAnimKey{variant: variant, frame: frame}] = sprite
+				partMap[frame] = sprite
 				return
 			}
 		}
@@ -273,8 +250,8 @@ func isConnectionMask(s string) bool {
 	return true
 }
 
-// GetTileSprites returns the PixelTileSprites for a tile at given variant and tick.
-func (reg *SpriteRegistry) GetTileSprites(tileName string, variant uint, tick uint64) PixelTileSprites {
+// GetTileSprites returns the PixelTileSprites for a tile at the given tick.
+func (reg *SpriteRegistry) GetTileSprites(tileName string, tick uint64) PixelTileSprites {
 	td := reg.tiles[tileName]
 	if td == nil {
 		return PixelTileSprites{Base: FillPixelSprite(255, 0, 255)} // magenta = missing
@@ -286,16 +263,10 @@ func (reg *SpriteRegistry) GetTileSprites(tileName string, variant uint, tick ui
 	}
 	frame := int(tick/8) % frameCount
 
-	v := int(variant) % td.variants
-	if td.variants == 0 {
-		v = 0
-	}
-
 	if td.hasBase {
 		// Tall tile
-		base := reg.getTilePart(td, "base", v, frame)
+		base := reg.getTilePart(td, "base", frame)
 		var overlays []PixelOverlay
-		// Collect DY values in sorted order
 		dyValues := make([]int, 0, len(td.hasDY))
 		for dy := range td.hasDY {
 			dyValues = append(dyValues, dy)
@@ -303,20 +274,18 @@ func (reg *SpriteRegistry) GetTileSprites(tileName string, variant uint, tick ui
 		sort.Ints(dyValues)
 		for _, dy := range dyValues {
 			partName := fmt.Sprintf("dy%d", dy)
-			s := reg.getTilePart(td, partName, v, frame)
+			s := reg.getTilePart(td, partName, frame)
 			overlays = append(overlays, PixelOverlay{Sprite: s, DY: dy})
 		}
 		return PixelTileSprites{Base: base, Overlays: overlays}
 	}
 
 	// Simple/animated tile
-	key := tileAnimKey{variant: v, frame: frame}
-	if s, ok := td.sprites[key]; ok {
+	if s, ok := td.sprites[frame]; ok {
 		return PixelTileSprites{Base: s}
 	}
 	// Fallback to frame 0
-	key.frame = 0
-	if s, ok := td.sprites[key]; ok {
+	if s, ok := td.sprites[0]; ok {
 		return PixelTileSprites{Base: s}
 	}
 
@@ -324,15 +293,10 @@ func (reg *SpriteRegistry) GetTileSprites(tileName string, variant uint, tick ui
 }
 
 // GetConnectedTileSprite returns a sprite for a connected tile with the given neighbor mask.
-func (reg *SpriteRegistry) GetConnectedTileSprite(tileName string, mask uint8, variant uint) PixelSprite {
+func (reg *SpriteRegistry) GetConnectedTileSprite(tileName string, mask uint8) PixelSprite {
 	td := reg.tiles[tileName]
 	if td == nil {
 		return FillPixelSprite(255, 0, 255)
-	}
-
-	v := int(variant) % td.variants
-	if td.variants == 0 {
-		v = 0
 	}
 
 	maskStr := fmt.Sprintf("%d%d%d%d",
@@ -342,14 +306,12 @@ func (reg *SpriteRegistry) GetConnectedTileSprite(tileName string, mask uint8, v
 		boolToInt(mask&ConnW != 0),
 	)
 
-	key := tileConnKey{variant: v, mask: maskStr}
-	if s, ok := td.connected[key]; ok {
+	if s, ok := td.connected[maskStr]; ok {
 		return s
 	}
 
 	// Fallback: try 0000
-	key.mask = "0000"
-	if s, ok := td.connected[key]; ok {
+	if s, ok := td.connected["0000"]; ok {
 		return s
 	}
 
@@ -363,17 +325,15 @@ func boolToInt(b bool) int {
 	return 0
 }
 
-func (reg *SpriteRegistry) getTilePart(td *tileData, partName string, variant, frame int) PixelSprite {
+func (reg *SpriteRegistry) getTilePart(td *tileData, partName string, frame int) PixelSprite {
 	partMap := td.parts[partName]
 	if partMap == nil {
 		return FillPixelSprite(255, 0, 255)
 	}
-	key := tileAnimKey{variant: variant, frame: frame}
-	if s, ok := partMap[key]; ok {
+	if s, ok := partMap[frame]; ok {
 		return s
 	}
-	key.frame = 0
-	if s, ok := partMap[key]; ok {
+	if s, ok := partMap[0]; ok {
 		return s
 	}
 	return FillPixelSprite(255, 0, 255)
@@ -383,15 +343,6 @@ func (reg *SpriteRegistry) getTilePart(td *tileData, partName string, variant, f
 func (reg *SpriteRegistry) HasTile(name string) bool {
 	_, ok := reg.tiles[name]
 	return ok
-}
-
-// TileVariants returns the number of variants for a tile type.
-func (reg *SpriteRegistry) TileVariants(name string) int {
-	td := reg.tiles[name]
-	if td == nil {
-		return 0
-	}
-	return td.variants
 }
 
 // TileIsConnected returns whether a tile type uses connected sprites.
