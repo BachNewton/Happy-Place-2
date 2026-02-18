@@ -2,7 +2,6 @@ package render
 
 import (
 	"fmt"
-	"strings"
 
 	"happy-place-2/internal/maps"
 )
@@ -91,17 +90,25 @@ type Engine struct {
 	lastDebugView bool
 	lastDebugPage int
 	lastInCombat  bool
+
+	// Pixel buffer for half-block rendering (world area only)
+	pixelBuf [][]Pixel
+	pixBufW  int // pixel columns (= terminal columns)
+	pixBufH  int // pixel rows (= (termH - HUDRows) * 2)
+	sprites  *SpriteRegistry
 }
 
 // NewEngine creates a renderer for the given terminal dimensions.
-func NewEngine(width, height int) *Engine {
+func NewEngine(width, height int, sprites *SpriteRegistry) *Engine {
 	e := &Engine{
 		width:      width,
 		height:     height,
 		firstFrame: true,
+		sprites:    sprites,
 	}
 	e.current = e.makeBuffer(sentinel)
 	e.next = e.makeBuffer(Cell{})
+	e.initPixelBuf()
 	return e
 }
 
@@ -111,7 +118,85 @@ func (e *Engine) Resize(width, height int) {
 	e.height = height
 	e.current = e.makeBuffer(sentinel)
 	e.next = e.makeBuffer(Cell{})
+	e.initPixelBuf()
 	e.firstFrame = true
+}
+
+// initPixelBuf allocates the pixel buffer for the world area.
+func (e *Engine) initPixelBuf() {
+	e.pixBufW = e.width
+	worldRows := e.height - HUDRows
+	if worldRows < 0 {
+		worldRows = 0
+	}
+	e.pixBufH = worldRows * 2 // 2 pixels per terminal row
+	e.pixelBuf = make([][]Pixel, e.pixBufH)
+	for y := 0; y < e.pixBufH; y++ {
+		e.pixelBuf[y] = make([]Pixel, e.pixBufW)
+	}
+}
+
+// clearPixelBuf fills the pixel buffer with a solid color.
+func (e *Engine) clearPixelBuf(r, g, b uint8) {
+	p := P(r, g, b)
+	for y := 0; y < e.pixBufH; y++ {
+		for x := 0; x < e.pixBufW; x++ {
+			e.pixelBuf[y][x] = p
+		}
+	}
+}
+
+// stampPixelSprite writes a pixel sprite into the pixel buffer at position (px, py).
+// When transparent is true, transparent pixels are skipped.
+func (e *Engine) stampPixelSprite(px, py int, sprite PixelSprite, transparent bool) {
+	for row := 0; row < PixelTileH; row++ {
+		bufY := py + row
+		if bufY < 0 || bufY >= e.pixBufH {
+			continue
+		}
+		for col := 0; col < PixelTileW; col++ {
+			bufX := px + col
+			if bufX < 0 || bufX >= e.pixBufW {
+				continue
+			}
+			p := sprite[row][col]
+			if transparent && p.Transparent {
+				continue
+			}
+			e.pixelBuf[bufY][bufX] = p
+		}
+	}
+}
+
+// collapsePixelBuf converts pixel pairs into half-block Cell values in next[][].
+// Each terminal row covers 2 pixel rows. The top pixel becomes the background color
+// and the bottom pixel becomes the foreground color of '▄' (U+2584).
+func (e *Engine) collapsePixelBuf() {
+	worldRows := e.height - HUDRows
+	if worldRows < 0 {
+		worldRows = 0
+	}
+	for row := 0; row < worldRows; row++ {
+		topPixRow := row * 2
+		botPixRow := row*2 + 1
+		for col := 0; col < e.width; col++ {
+			if col >= e.pixBufW {
+				break
+			}
+			var top, bot Pixel
+			if topPixRow < e.pixBufH {
+				top = e.pixelBuf[topPixRow][col]
+			}
+			if botPixRow < e.pixBufH {
+				bot = e.pixelBuf[botPixRow][col]
+			}
+			e.next[row][col] = Cell{
+				Ch:  '▄',
+				FgR: bot.R, FgG: bot.G, FgB: bot.B,
+				BgR: top.R, BgG: top.G, BgB: top.B,
+			}
+		}
+	}
 }
 
 func (e *Engine) makeBuffer(fill Cell) [][]Cell {
@@ -199,25 +284,19 @@ func (e *Engine) Render(
 		return e.renderCombatView(combat, viewerName, viewerColor, totalPlayers, tick, statsInfo)
 	}
 
-	vp := NewViewport(viewerX, viewerY, termW, termH, tileMap.Width, tileMap.Height, HUDRows)
+	vp := NewPixelViewport(viewerX, viewerY, termW, termH, tileMap.Width, tileMap.Height, HUDRows)
 
-	// Clear next buffer
-	bgCell := Cell{Ch: ' ', BgR: 10, BgG: 10, BgB: 15}
-	for y := 0; y < e.height; y++ {
-		for x := 0; x < e.width; x++ {
-			e.next[y][x] = bgCell
-		}
-	}
+	// Clear pixel buffer with background color
+	e.clearPixelBuf(10, 10, 15)
 
 	// --- Pass 1: Ground tiles + collect overlays ---
 	const maxOverlayDY = 3 // scan extra rows below viewport for tiles whose overlays reach in
-	signSprite := SignSprite()
 
-	type pendingOverlay struct {
-		sx, sy int
-		sprite Sprite
+	type pendingPixelOverlay struct {
+		px, py int
+		sprite PixelSprite
 	}
-	var overlays []pendingOverlay
+	var overlays []pendingPixelOverlay
 
 	scanH := vp.ViewH + maxOverlayDY
 	for ty := 0; ty < scanH; ty++ {
@@ -228,22 +307,19 @@ func (e *Engine) Render(
 				continue
 			}
 			tile := tileMap.TileAt(wx, wy)
-			ts := TileSprite(tile, wx, wy, tick, tileMap)
-			sx := vp.OffsetX + tx*TileWidth
-			sy := vp.OffsetY + ty*TileHeight
+			ts := PixelTileSprite(e.sprites, tile, wx, wy, tick, tileMap)
+			px := vp.OffsetX + tx*PixelTileW
+			py := vp.OffsetY + ty*PixelTileH
 
 			// Only stamp base for tiles within the visible viewport
 			if ty < vp.ViewH {
-				e.stampSprite(sx, sy, ts.Base, false)
-				if tileMap.InteractionAt(wx, wy) != nil {
-					e.stampSprite(sx, sy, signSprite, true)
-				}
+				e.stampPixelSprite(px, py, ts.Base, false)
 			}
 
 			// Collect overlays — rendered after players
 			for _, ov := range ts.Overlays {
-				ovSY := sy - ov.DY*TileHeight
-				overlays = append(overlays, pendingOverlay{sx: sx, sy: ovSY, sprite: ov.Sprite})
+				ovPY := py - ov.DY*PixelTileH
+				overlays = append(overlays, pendingPixelOverlay{px: px, py: ovPY, sprite: ov.Sprite})
 			}
 		}
 	}
@@ -251,87 +327,41 @@ func (e *Engine) Render(
 	// --- Pass 2: Players ---
 	var viewerPopup *InteractionPopup
 	for _, p := range players {
-		sx, sy := vp.WorldToScreen(p.X, p.Y)
-		if sx+TileWidth <= 0 || sx >= termW || sy+TileHeight <= 0 || sy >= (termH-HUDRows) {
+		px, py := vp.WorldToPixel(p.X, p.Y)
+		if px+PixelTileW <= 0 || px >= e.pixBufW || py+PixelTileH <= 0 || py >= e.pixBufH {
 			continue
 		}
 		isSelf := p.ID == viewerID
 		if isSelf && p.ActiveInteraction != nil {
 			viewerPopup = p.ActiveInteraction
 		}
-		sprite := PlayerSprite(p.Dir, p.Anim, p.AnimFrame, p.Color, isSelf, p.Name)
-		e.stampSprite(sx, sy, sprite, true)
+		sprite := e.sprites.GetPlayerSprite(p.Dir, p.Color)
+		e.stampPixelSprite(px, py, sprite, true)
 	}
 
 	// --- Pass 3: Overlays (on top of players) ---
 	for _, ov := range overlays {
-		e.stampSprite(ov.sx, ov.sy, ov.sprite, true)
+		e.stampPixelSprite(ov.px, ov.py, ov.sprite, true)
 	}
 
-	// Draw interaction popup above sign tile
+	// Collapse pixel buffer into half-block cells
+	e.collapsePixelBuf()
+
+	// Draw interaction popup above sign tile (character-based, on top of collapsed cells)
 	if viewerPopup != nil {
-		e.drawInteractionPopup(viewerPopup, vp, termH)
+		e.drawInteractionPopupPixel(viewerPopup, vp, termH)
 	}
 
-	// Draw HUD
+	// Draw HUD (character-based, writes directly to next)
 	e.drawHUD(viewerName, viewerColor, totalPlayers, tileMap.Name, statsInfo)
 
-	// Diff current vs next, emit only changed cells
-	var sb strings.Builder
-	sb.Grow(16384)
-
-	lastRow, lastCol := -1, -1
-	for y := 0; y < e.height; y++ {
-		for x := 0; x < e.width; x++ {
-			nc := e.next[y][x]
-			if e.firstFrame || nc != e.current[y][x] {
-				// Only emit cursor position if not consecutive
-				if y != lastRow || x != lastCol {
-					sb.WriteString(MoveTo(y+1, x+1))
-				}
-				WriteCellSGR(&sb, nc)
-				lastRow = y
-				lastCol = x + 1
-			}
-		}
-	}
-
-	if sb.Len() > 0 {
-		sb.WriteString(Reset)
-	}
-
-	// Swap buffers
-	e.current, e.next = e.next, e.current
-	e.firstFrame = false
-
-	return sb.String()
-}
-
-// stampSprite writes a sprite into the buffer at screen position (sx, sy).
-// When transparent is true, SpriteCell.Transparent cells are skipped.
-func (e *Engine) stampSprite(sx, sy int, sprite Sprite, transparent bool) {
-	for row := 0; row < TileHeight; row++ {
-		screenY := sy + row
-		if screenY < 0 || screenY >= e.height {
-			continue
-		}
-		for col := 0; col < TileWidth; col++ {
-			screenX := sx + col
-			if screenX < 0 || screenX >= e.width {
-				continue
-			}
-			sc := sprite[row][col]
-			if transparent && sc.Transparent {
-				continue
-			}
-			e.next[screenY][screenX] = sc.Cell
-		}
-	}
+	return e.emitDiff()
 }
 
 // --- Interaction Popup ---
 
-func (e *Engine) drawInteractionPopup(popup *InteractionPopup, vp Viewport, termH int) {
+// drawInteractionPopupPixel draws the popup using PixelViewport tile dimensions.
+func (e *Engine) drawInteractionPopupPixel(popup *InteractionPopup, vp PixelViewport, termH int) {
 	signSX, signSY := vp.WorldToScreen(popup.WorldX, popup.WorldY)
 
 	textRunes := []rune(popup.Text)
@@ -339,7 +369,7 @@ func (e *Engine) drawInteractionPopup(popup *InteractionPopup, vp Viewport, term
 	popupH := 3                  // top border, text, bottom border
 
 	// Horizontal: center on sign tile, clamp to screen
-	popupX := signSX + (TileWidth-popupW)/2
+	popupX := signSX + (CharTileW-popupW)/2
 	if popupX < 0 {
 		popupX = 0
 	}
@@ -353,7 +383,7 @@ func (e *Engine) drawInteractionPopup(popup *InteractionPopup, vp Viewport, term
 	popupY := signSY - popupH
 	if popupY < 0 {
 		// Not enough room above — try below
-		popupY = signSY + TileHeight
+		popupY = signSY + CharTileH
 	}
 	// If popup overlaps HUD, try above instead; if still no room, skip
 	if popupY+popupH > hudTop {
@@ -593,14 +623,32 @@ func (e *Engine) writeHUDTextLine(row int, text string, fgR, fgG, fgB, bgR, bgG,
 	}
 }
 
-// renderDebugView draws a paginated debug view of tile and player sprites.
+// renderDebugView draws a paginated debug view of pixel tile and player sprites.
+// Uses the pixel buffer + collapse approach. Each tile is CharTileW x CharTileH on screen.
 // Page 0: non-connected tile sprites, Page 1: connected tile sprites, Page 2: player sprites.
 func (e *Engine) renderDebugView(viewerColor, page int, tick uint64) string {
-	// Clear buffer with dark background
-	bgCell := Cell{Ch: ' ', BgR: 18, BgG: 18, BgB: 24}
-	for y := 0; y < e.height; y++ {
-		for x := 0; x < e.width; x++ {
-			e.next[y][x] = bgCell
+	// Use the full screen as pixel buffer (no HUD in debug)
+	debugPixH := e.height * 2
+	debugPixW := e.width
+	// Temporarily expand pixel buffer to cover the full screen
+	savedH := e.pixBufH
+	e.pixBufH = debugPixH
+	if len(e.pixelBuf) < debugPixH {
+		for len(e.pixelBuf) < debugPixH {
+			e.pixelBuf = append(e.pixelBuf, make([]Pixel, debugPixW))
+		}
+	}
+	for y := 0; y < debugPixH; y++ {
+		if len(e.pixelBuf[y]) < debugPixW {
+			e.pixelBuf[y] = make([]Pixel, debugPixW)
+		}
+	}
+
+	// Clear with dark background
+	bgR, bgG, bgB := uint8(18), uint8(18), uint8(24)
+	for y := 0; y < debugPixH; y++ {
+		for x := 0; x < debugPixW; x++ {
+			e.pixelBuf[y][x] = P(bgR, bgG, bgB)
 		}
 	}
 
@@ -609,88 +657,95 @@ func (e *Engine) renderDebugView(viewerColor, page int, tick uint64) string {
 		page = 0
 	}
 
-	// Title row
-	title := fmt.Sprintf("SPRITE DEBUG [%d/%d: %s] (\u2190\u2192 nav, ~ close)", page+1, len(pageNames), pageNames[page])
-	titleRunes := []rune(title)
-	for i, r := range titleRunes {
-		if i+1 < e.width {
-			e.next[0][i+1] = Cell{Ch: r, FgR: 255, FgG: 220, FgB: 100, BgR: 18, BgG: 18, BgB: 24, Bold: true}
-		}
-	}
-
 	// Layout constants
-	gap := 1
-	rowHeight := TileHeight + 2 // label row + sprite + gap row
+	gap := 2
+	charRowH := CharTileH + 2 // label row + tile char rows + gap row
 
-	// Helper to write a label at screen position
-	writeLabel := func(row, col int, label string) {
-		for i, r := range []rune(label) {
-			x := col + i
-			if x >= 0 && x < e.width && row >= 0 && row < e.height {
-				e.next[row][x] = Cell{Ch: r, FgR: 160, FgG: 160, FgB: 175, BgR: 18, BgG: 18, BgB: 24}
-			}
-		}
-	}
-
-	// Flow layout cursor
+	// Flow layout cursor (in char rows, not pixels)
 	curX := 0
-	curY := 2
+	curY := 2 // leave room for title
 
-	// placeGroup places a labeled sprite group, advancing the cursor.
-	placeGroup := func(label string, width int) (int, int) {
-		if curX > 0 && curX+width > e.width {
+	placeGroup := func(label string, charWidth int) (int, int) {
+		if curX > 0 && curX+charWidth > e.width {
 			curX = 0
-			curY += rowHeight
+			curY += charRowH
 		}
 		sx, sy := curX, curY
-		writeLabel(sy, sx, label)
-		curX += width + gap*2
+		curX += charWidth + gap
+		_ = label // label drawn after collapse
 		return sx, sy
 	}
 
+	// Stamp pixel sprites at positions mapped from char to pixel coords
+	stampAt := func(charX, charY int, sprite PixelSprite, transparent bool) {
+		px := charX
+		py := charY * 2 // 2 pixel rows per char row
+		for row := 0; row < PixelTileH; row++ {
+			bufY := py + row
+			if bufY < 0 || bufY >= debugPixH {
+				continue
+			}
+			for col := 0; col < PixelTileW; col++ {
+				bufX := px + col
+				if bufX < 0 || bufX >= debugPixW {
+					continue
+				}
+				p := sprite[row][col]
+				if transparent && p.Transparent {
+					continue
+				}
+				e.pixelBuf[bufY][bufX] = p
+			}
+		}
+	}
+
+	type labelInfo struct {
+		row, col int
+		text     string
+	}
+	var labels []labelInfo
+
 	switch page {
 	case 0: // Non-connected tile sprites with variants
-		for i := range tileList {
-			entry := &tileList[i]
-			if entry.connected {
+		for _, name := range pixelTileNames(e.sprites) {
+			if e.sprites.TileIsConnected(name) {
+				continue
+			}
+			variants := e.sprites.TileVariants(name)
+			if variants == 0 {
 				continue
 			}
 
-			// Determine max overlay DY for height calculation
+			// Check for tall tile (has overlays)
+			sample := e.sprites.GetTileSprites(name, 0, tick)
 			maxDY := 0
-			if entry.variants > 0 {
-				wx, wy := variantCoord(0, entry.variants)
-				ts := entry.fn(wx, wy, tick, nil)
-				for _, ov := range ts.Overlays {
-					if ov.DY > maxDY {
-						maxDY = ov.DY
-					}
+			for _, ov := range sample.Overlays {
+				if ov.DY > maxDY {
+					maxDY = ov.DY
 				}
 			}
-			overlayPixels := maxDY * TileHeight
+			overlayCharRows := maxDY * CharTileH
 
-			groupWidth := entry.variants*TileWidth + (entry.variants-1)*gap
-			sx, sy := placeGroup(entry.name, groupWidth)
+			groupWidth := variants*CharTileW + (variants-1)*gap
+			sx, sy := placeGroup(name, groupWidth)
+			labels = append(labels, labelInfo{sy, sx, name})
 
-			for v := 0; v < entry.variants; v++ {
-				wx, wy := variantCoord(v, entry.variants)
-				ts := entry.fn(wx, wy, tick, nil)
-				baseX := sx + v*(TileWidth+gap)
-				baseY := sy + 1 + overlayPixels // push base down so overlays fit above
-				e.stampSprite(baseX, baseY, ts.Base, false)
+			for v := 0; v < variants; v++ {
+				ts := e.sprites.GetTileSprites(name, uint(v), tick)
+				baseX := sx + v*(CharTileW+gap)
+				baseY := sy + 1 + overlayCharRows
+				stampAt(baseX, baseY, ts.Base, false)
 				for _, ov := range ts.Overlays {
-					e.stampSprite(baseX, baseY-ov.DY*TileHeight, ov.Sprite, true)
+					stampAt(baseX, baseY-ov.DY*CharTileH, ov.Sprite, true)
 				}
 			}
 
-			// Advance cursor past the extra overlay height
-			if overlayPixels > 0 {
-				curY += overlayPixels
+			if overlayCharRows > 0 {
+				curY += overlayCharRows
 			}
 		}
 
 	case 1: // Connected tile sprites — practical preview
-		// Pattern shows corners, runs, T-junction, and cross in context
 		pattern := [][]bool{
 			{false, true, true, true, true, true, false},
 			{false, true, false, true, false, true, false},
@@ -718,82 +773,111 @@ func (e *Engine) renderDebugView(viewerColor, page int, tick uint64) string {
 			return mask
 		}
 
-		for i := range tileList {
-			entry := &tileList[i]
-			if !entry.connected {
+		for _, name := range pixelTileNames(e.sprites) {
+			if !e.sprites.TileIsConnected(name) {
 				continue
 			}
+			variants := e.sprites.TileVariants(name)
 
 			// Variant row
-			groupWidth := entry.variants*TileWidth + (entry.variants-1)*gap
-			sx, sy := placeGroup(entry.name, groupWidth)
-			for v := 0; v < entry.variants; v++ {
-				sprite := entry.connFn(ConnE|ConnW, uint(v), tick)
-				e.stampSprite(sx+v*(TileWidth+gap), sy+1, sprite, false)
+			groupWidth := variants*CharTileW + (variants-1)*gap
+			sx, sy := placeGroup(name, groupWidth)
+			labels = append(labels, labelInfo{sy, sx, name})
+			for v := 0; v < variants; v++ {
+				sprite := e.sprites.GetConnectedTileSprite(name, ConnE|ConnW, uint(v))
+				stampAt(sx+v*(CharTileW+gap), sy+1, sprite, false)
 			}
 
-			// Practical preview grid with grass background
+			// Practical preview grid
 			curX = 0
-			curY += rowHeight
-			writeLabel(curY, curX, "preview")
+			curY += charRowH
+			labels = append(labels, labelInfo{curY, curX, "preview"})
 			gridY := curY + 1
 
 			for py := 0; py < patH; py++ {
 				for px := 0; px < patW; px++ {
-					screenX := curX + px*TileWidth
-					screenY := gridY + py*TileHeight
+					screenX := curX + px*CharTileW
+					screenY := gridY + py*CharTileH
 					if pattern[py][px] {
 						mask := patMask(px, py)
-						v := TileHash(px, py) % uint(entry.variants)
-						sprite := entry.connFn(mask, v, tick)
-						e.stampSprite(screenX, screenY, sprite, false)
+						v := TileHash(px, py) % uint(variants)
+						sprite := e.sprites.GetConnectedTileSprite(name, mask, v)
+						stampAt(screenX, screenY, sprite, false)
 					} else {
-						sprite := grassSprite(TileHash(px, py)%4, tick)
-						e.stampSprite(screenX, screenY, sprite, false)
+						grassTS := e.sprites.GetTileSprites("grass", TileHash(px, py)%4, tick)
+						stampAt(screenX, screenY, grassTS.Base, false)
 					}
 				}
 			}
 
-			curY = gridY + patH*TileHeight + 1
+			curY = gridY + patH*CharTileH + 1
 			curX = 0
 		}
 
 	case 2: // Player sprites
 		dirNames := []string{"down", "up", "left", "right"}
 		for i, dName := range dirNames {
-			sx, sy := placeGroup(dName, TileWidth)
-			sprite := PlayerSprite(i, 0, 0, viewerColor, true, "Debug")
-			e.stampSprite(sx, sy+1, sprite, true)
+			sx, sy := placeGroup(dName, CharTileW)
+			labels = append(labels, labelInfo{sy, sx, dName})
+			sprite := e.sprites.GetPlayerSprite(i, viewerColor)
+			stampAt(sx, sy+1, sprite, true)
 		}
 	}
 
-	// Diff and emit
-	var sb strings.Builder
-	sb.Grow(16384)
-
-	lastRow, lastCol := -1, -1
-	for y := 0; y < e.height; y++ {
-		for x := 0; x < e.width; x++ {
-			nc := e.next[y][x]
-			if e.firstFrame || nc != e.current[y][x] {
-				if y != lastRow || x != lastCol {
-					sb.WriteString(MoveTo(y+1, x+1))
-				}
-				WriteCellSGR(&sb, nc)
-				lastRow = y
-				lastCol = x + 1
+	// Collapse pixel buffer into next[][] (full screen, not just world area)
+	for row := 0; row < e.height; row++ {
+		topPixRow := row * 2
+		botPixRow := row*2 + 1
+		for col := 0; col < e.width; col++ {
+			if col >= debugPixW {
+				break
+			}
+			var top, bot Pixel
+			if topPixRow < debugPixH {
+				top = e.pixelBuf[topPixRow][col]
+			}
+			if botPixRow < debugPixH {
+				bot = e.pixelBuf[botPixRow][col]
+			}
+			e.next[row][col] = Cell{
+				Ch:  '▄',
+				FgR: bot.R, FgG: bot.G, FgB: bot.B,
+				BgR: top.R, BgG: top.G, BgB: top.B,
 			}
 		}
 	}
 
-	if sb.Len() > 0 {
-		sb.WriteString(Reset)
+	// Restore pixel buffer height
+	e.pixBufH = savedH
+
+	// Draw title and labels on top of collapsed cells (character-based)
+	title := fmt.Sprintf("SPRITE DEBUG [%d/%d: %s] (\u2190\u2192 nav, ~ close)", page+1, len(pageNames), pageNames[page])
+	for i, r := range []rune(title) {
+		if i+1 < e.width {
+			e.next[0][i+1] = Cell{Ch: r, FgR: 255, FgG: 220, FgB: 100, BgR: bgR, BgG: bgG, BgB: bgB, Bold: true}
+		}
+	}
+	for _, l := range labels {
+		for i, r := range []rune(l.text) {
+			x := l.col + i
+			if x >= 0 && x < e.width && l.row >= 0 && l.row < e.height {
+				e.next[l.row][x] = Cell{Ch: r, FgR: 160, FgG: 160, FgB: 175, BgR: bgR, BgG: bgG, BgB: bgB}
+			}
+		}
 	}
 
-	e.current, e.next = e.next, e.current
-	e.firstFrame = false
+	return e.emitDiff()
+}
 
-	return sb.String()
+// pixelTileNames returns the tile names in display order, filtered to those in the registry.
+func pixelTileNames(reg *SpriteRegistry) []string {
+	var names []string
+	for _, name := range tileNameOrder {
+		if reg.HasTile(name) {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 func max(a, b int) int {

@@ -11,6 +11,7 @@ import (
 
 	"happy-place-2/internal/game"
 	"happy-place-2/internal/maps"
+	"happy-place-2/internal/render"
 	"happy-place-2/internal/server"
 )
 
@@ -18,6 +19,7 @@ const (
 	defaultAddr = ":2222"
 	hostKeyPath = "host_key"
 	mapsDir     = "assets/maps"
+	spritesDir  = "assets/sprites"
 	defaultMap  = "Town Square"
 )
 
@@ -40,6 +42,12 @@ func main() {
 		log.Printf("Map loaded: %s (%dx%d, %d portals)", name, m.Width, m.Height, len(m.Portals))
 	}
 
+	// Load sprite registry
+	sprites, err := render.NewSpriteRegistry(spritesDir)
+	if err != nil {
+		log.Fatalf("Failed to load sprites from %s: %v", spritesDir, err)
+	}
+
 	// Create game world and loop
 	world := game.NewWorld(allMaps, defaultMap)
 	gameLoop := game.NewGameLoop(world)
@@ -53,7 +61,7 @@ func main() {
 	if port := os.Getenv("PORT"); port != "" {
 		listenAddr = ":" + port
 	}
-	sshServer := server.NewSSHServer(listenAddr, hostKeyPath, gameLoop)
+	sshServer := server.NewSSHServer(listenAddr, hostKeyPath, gameLoop, sprites)
 	log.Printf("Starting Happy Place 2 — connect with: ssh -p %s YourName@localhost", listenAddr[1:])
 	if err := sshServer.Start(); err != nil {
 		log.Fatalf("SSH server error: %v", err)

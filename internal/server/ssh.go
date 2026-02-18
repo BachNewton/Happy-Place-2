@@ -18,14 +18,16 @@ type SSHServer struct {
 	gameLoop *game.GameLoop
 	addr     string
 	hostKey  string
+	sprites  *render.SpriteRegistry
 }
 
 // NewSSHServer creates a new SSH server bound to the given address.
-func NewSSHServer(addr string, hostKey string, gl *game.GameLoop) *SSHServer {
+func NewSSHServer(addr string, hostKey string, gl *game.GameLoop, sprites *render.SpriteRegistry) *SSHServer {
 	return &SSHServer{
 		gameLoop: gl,
 		addr:     addr,
 		hostKey:  hostKey,
+		sprites:  sprites,
 	}
 }
 
@@ -75,7 +77,7 @@ func (s *SSHServer) handleSession(sess ssh.Session) {
 	var termMu sync.Mutex
 
 	// Create renderer
-	engine := render.NewEngine(termW, termH)
+	engine := render.NewEngine(termW, termH, s.sprites)
 
 	// Setup terminal
 	io.WriteString(sess, render.EnableAltScreen())

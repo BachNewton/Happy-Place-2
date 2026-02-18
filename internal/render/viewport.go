@@ -1,50 +1,52 @@
 package render
 
-// Viewport computes camera coordinates for a player's view.
-// CamX/CamY are in world tile units. OffsetX/OffsetY are the screen-cell
-// position where the first tile's top-left is stamped (0 or negative for
-// partial tiles).
-type Viewport struct {
+// PixelViewport computes camera coordinates for pixel-based rendering.
+// CamX/CamY are in world tile units. OffsetX/OffsetY are the pixel-buffer
+// position where the first tile's top-left is stamped.
+type PixelViewport struct {
 	CamX, CamY       int // top-left world tile coordinate
 	ViewW, ViewH     int // visible world tiles (including partials)
-	OffsetX, OffsetY int // screen offset for the first tile (0 or negative)
+	OffsetX, OffsetY int // pixel offset for the first tile (0 or negative)
 }
 
-// NewViewport calculates the camera position centered on the player,
-// clamped to map edges. Each tile occupies TileWidth cols x TileHeight rows.
-func NewViewport(playerX, playerY, termW, termH, mapW, mapH, hudRows int) Viewport {
+// NewPixelViewport calculates the camera position centered on the player,
+// clamped to map edges. Uses CharTileW cols x CharTileH rows per tile for
+// screen-space calculations, but PixelTileW x PixelTileH for pixel-space.
+func NewPixelViewport(playerX, playerY, termW, termH, mapW, mapH, hudRows int) PixelViewport {
 	screenW := termW
 	screenH := termH - hudRows
+	// Screen height in pixels (2 pixels per row)
+	screenPixH := screenH * 2
 
-	// Center player's tile center on screen center (pixel-level)
-	camPixelX := playerX*TileWidth + TileWidth/2 - screenW/2
-	camPixelY := playerY*TileHeight + TileHeight/2 - screenH/2
+	// Center player's tile center on screen center (in char-space for X, pixel-space for Y)
+	camCharX := playerX*CharTileW + CharTileW/2 - screenW/2
+	camPixelY := playerY*PixelTileH + PixelTileH/2 - screenPixH/2
 
-	// Clamp to map pixel edges
-	maxPixelX := mapW*TileWidth - screenW
-	maxPixelY := mapH*TileHeight - screenH
-	if camPixelX < 0 {
-		camPixelX = 0
+	// Clamp to map edges
+	maxCharX := mapW*CharTileW - screenW
+	maxPixelY := mapH*PixelTileH - screenPixH
+	if camCharX < 0 {
+		camCharX = 0
 	}
 	if camPixelY < 0 {
 		camPixelY = 0
 	}
-	if maxPixelX > 0 && camPixelX > maxPixelX {
-		camPixelX = maxPixelX
+	if maxCharX > 0 && camCharX > maxCharX {
+		camCharX = maxCharX
 	}
 	if maxPixelY > 0 && camPixelY > maxPixelY {
 		camPixelY = maxPixelY
 	}
 
 	// Derive tile camera + sub-tile offset
-	camX := camPixelX / TileWidth
-	camY := camPixelY / TileHeight
-	offsetX := -(camPixelX % TileWidth)
-	offsetY := -(camPixelY % TileHeight)
+	camX := camCharX / CharTileW
+	camY := camPixelY / PixelTileH
+	offsetX := -(camCharX % CharTileW)
+	offsetY := -(camPixelY % PixelTileH)
 
 	// Tiles needed to cover screen (including partials)
-	viewW := (screenW - offsetX + TileWidth - 1) / TileWidth
-	viewH := (screenH - offsetY + TileHeight - 1) / TileHeight
+	viewW := (screenW - offsetX + CharTileW - 1) / CharTileW
+	viewH := (screenPixH - offsetY + PixelTileH - 1) / PixelTileH
 
 	// Don't exceed map bounds
 	if camX+viewW > mapW {
@@ -54,7 +56,7 @@ func NewViewport(playerX, playerY, termW, termH, mapW, mapH, hudRows int) Viewpo
 		viewH = mapH - camY
 	}
 
-	return Viewport{
+	return PixelViewport{
 		CamX:    camX,
 		CamY:    camY,
 		ViewW:   viewW,
@@ -64,7 +66,13 @@ func NewViewport(playerX, playerY, termW, termH, mapW, mapH, hudRows int) Viewpo
 	}
 }
 
-// WorldToScreen converts world tile coordinates to screen-cell coordinates.
-func (v Viewport) WorldToScreen(wx, wy int) (int, int) {
-	return (wx-v.CamX)*TileWidth + v.OffsetX, (wy-v.CamY)*TileHeight + v.OffsetY
+// WorldToPixel converts world tile coordinates to pixel-buffer coordinates.
+func (v PixelViewport) WorldToPixel(wx, wy int) (int, int) {
+	return (wx-v.CamX)*PixelTileW + v.OffsetX, (wy-v.CamY)*PixelTileH + v.OffsetY
+}
+
+// WorldToScreen converts world tile coordinates to screen-cell coordinates
+// (for HUD/popup positioning that needs char coordinates).
+func (v PixelViewport) WorldToScreen(wx, wy int) (int, int) {
+	return (wx-v.CamX)*CharTileW + v.OffsetX, (wy-v.CamY)*CharTileH + v.OffsetY/2
 }

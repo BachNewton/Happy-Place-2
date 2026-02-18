@@ -7,7 +7,7 @@ Multiplayer SSH terminal RPG. Players connect via any SSH client, move through a
 - **Language:** Go 1.23
 - **SSH:** `gliderlabs/ssh` — username-only auth (username = display name)
 - **Maps:** JSON tile maps loaded from `assets/maps/`
-- **Renderer:** Double-buffer diff ANSI renderer (only redraws changed cells)
+- **Renderer:** Half-block pixel renderer — PNG sprites → pixel buffer → `▄` cells → double-buffer diff ANSI output
 
 ## Quick Start
 
@@ -37,13 +37,18 @@ internal/
     timing.go               # Tick rate and timing constants
     world.go                # World helpers (delegates to maps pkg)
   render/
-    engine.go               # Double-buffer diff renderer + HUD
+    engine.go               # Pixel buffer renderer + HUD + debug view
     combat_view.go          # Combat screen renderer (enemy/player/log/HUD)
-    tile_sprites.go         # Tile sprite renderers (15 tile types)
-    viewport.go             # Camera coordinate translation
+    pixel.go                # Pixel types (Pixel, PixelSprite, PixelOverlay, PixelTileSprites)
+    pixel_tiles.go          # Pixel tile lookup (PixelTileSprite)
+    png_loader.go           # PNG sprite loader + SpriteRegistry + player palette swap
+    tile_sprites.go         # TileHash, connection masks, tile name ordering
+    viewport.go             # PixelViewport camera coordinate translation
     ansi.go                 # ANSI escape code helpers
   maps/loader.go            # JSON map parser + DefaultMap() fallback
 assets/maps/                # JSON tile maps (handcrafted + generated)
+assets/sprites/tiles/       # 16x16 PNG tile sprites (placeholder art)
+assets/sprites/players/     # 16x16 PNG player template sprites
 docs/procgen.md             # Procedural generation design & reference
 ```
 
@@ -56,16 +61,30 @@ docs/procgen.md             # Procedural generation design & reference
 
 ## Rendering Terminology
 
-- **Viewport:** The visible portion of the world, defined by camera position (`CamX`/`CamY`) and size (`ViewW`/`ViewH`) in world tile units. Centered on the player, clamped to map edges.
-- **World tiles:** The tile grid area filling the upper portion of the screen. Each tile occupies `TileWidth` x `TileHeight` screen cells.
-- **HUD:** The bottom 4 rows of the terminal (`HUDRows = 4`): a separator line, then 3 content rows in a two-column layout. Left column: world info, EXP/level, controls. Right column: Health, Stamina, Magic stat bars.
-- **Sprite** (`Sprite`): A `TileHeight` x `TileWidth` grid of `SpriteCell`s — the visual representation of a single tile-sized layer. Stamped into the buffer via `stampSprite`.
-- **TileSprites** (`TileSprites`): The complete visual output for a tile — a `Base` sprite plus an optional `Overlays` slice. Simple tiles (grass, wall) have only a base. Tall tiles (trees) have a base plus one or more overlays.
-- **Overlay** (`Overlay`): A sprite rendered at a vertical offset above its owning tile. Each overlay has a `Sprite` and a `DY` (tile units upward, e.g. `DY=1` means one tile above the base). Overlay cells can be transparent, letting lower layers show through.
-- **3-pass rendering:** The render loop in `engine.go` draws in three passes: (1) **Ground pass** stamps `TileSprites.Base` for every visible tile and collects overlays, (2) **Player pass** stamps player sprites, (3) **Overlay pass** stamps collected overlays on top of players. This lets players walk behind tall objects like tree canopies.
-- **Tall tile:** A tile whose `TileSprites` includes overlays, making it visually taller than one tile. Trees are 3 tiles tall (base at DY=0, lower canopy at DY=1, upper canopy at DY=2). Built with `tallVariantTile` in `tile_sprites.go`.
+- **Pixel** (`Pixel`): An `{R, G, B uint8; Transparent bool}` value. The smallest visual unit.
+- **PixelSprite** (`PixelSprite`): A `[16][16]Pixel` grid — one tile's visual data. Loaded from 16x16 PNG files.
+- **PixelTileSprites** (`PixelTileSprites`): A `Base` PixelSprite plus optional `Overlays` slice. Simple tiles have only a base. Tall tiles (trees) add overlays at DY offsets above the base.
+- **PixelOverlay** (`PixelOverlay`): A PixelSprite rendered at a vertical offset above its owning tile. Each has a `Sprite` and a `DY` (tile units upward).
+- **Half-block rendering:** Each terminal cell displays 2 vertical pixels using `▄` (U+2584). Background color = top pixel, foreground color = bottom pixel. A 16x16 pixel tile renders as 16 cols x 8 rows of terminal characters.
+- **Pixel buffer** (`pixelBuf`): A `[][]Pixel` grid covering the world area (everything above the HUD). Width = terminal columns, height = (termH - HUDRows) * 2 pixels.
+- **Tile dimensions:** `PixelTileW = 16`, `PixelTileH = 16` (pixel-space). `CharTileW = 16`, `CharTileH = 8` (screen-space, after half-block collapse).
+- **PixelViewport:** Camera coordinates for pixel-based rendering. `CamX`/`CamY` in world tile units, `OffsetX`/`OffsetY` in pixel-buffer coordinates. Centered on player, clamped to map edges.
+- **3-pass rendering:** (1) **Ground pass** stamps `PixelTileSprites.Base` into pixelBuf + collects overlays, (2) **Player pass** stamps player PixelSprites, (3) **Overlay pass** stamps collected overlays on top of players. Then `collapsePixelBuf()` converts pixel pairs to half-block `Cell` values in `next`.
+- **SpriteRegistry:** Loaded at startup from `assets/sprites/`. Holds all tile and player PixelSprites. Player sprites are palette-swapped from templates (shirt `#FF0000` → player color, pants `#AA0000` → darkened).
+- **HUD:** The bottom 4 rows of the terminal (`HUDRows = 4`), rendered character-based directly into `next[][]` after pixel buffer collapse.
 - **Buffers (`current` / `next`):** The double-buffer system. `next` is built each frame, diffed against `current`, and only changed cells are emitted as ANSI output.
-- **Debug view:** An alternate full-screen view (toggled with `` ` ``) showing all tile sprites and player direction sprites in a grid. Tall tiles display their overlays stacked above the base.
+- **Debug view:** An alternate full-screen view (toggled with `` ` ``) showing all pixel sprites collapsed via half-block rendering.
+
+### Sprite PNG Naming Conventions
+
+Sprites are loaded from `assets/sprites/tiles/` and `assets/sprites/players/`:
+- **Simple:** `grass_0.png` through `grass_3.png` (tile_variant.png)
+- **Animated:** `water_0_f0.png`, `water_0_f1.png` (tile_variant_fN.png)
+- **Tall:** `tree_0_base.png`, `tree_0_dy1.png`, `tree_0_dy2.png`
+- **Connected:** `fence_0_0000.png` through `fence_0_1111.png` (NESW bitmask)
+- **Player:** `player_down.png`, `player_up.png`, `player_left.png`, `player_right.png`
+
+Transparent pixels: alpha < 50% or magenta `#FF00FF`.
 
 ## Combat View Terminology
 
@@ -107,7 +126,7 @@ Maps are JSON files in `assets/maps/`. See `town.json` for the format. The legen
 
 ### Tile Types
 
-15 tile types have sprite renderers in `tile_sprites.go`:
+15 tile types have PNG sprites in `assets/sprites/tiles/`:
 
 | Name | Walkable | Notes |
 |------|----------|-------|
@@ -166,6 +185,6 @@ sudo journalctl -u happy-place -f    # View logs
 
 - Host key is auto-generated as `host_key` in the working directory on first run
 - No password auth — username becomes the player's display name
-- `@` is the current player; other players show as the first letter of their name
-- Player colors rotate through bright ANSI colors (91–96)
+- Player sprites are 16x16 PNGs with palette-swapped shirt/pants colors
+- Player colors rotate through 6 RGB shirt colors (defined in `PlayerBGColors`)
 - Duplicate usernames get a `_NNNN` suffix appended
