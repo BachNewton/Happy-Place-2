@@ -35,6 +35,7 @@ type PlayerInfo struct {
 	AnimFrame         int // current animation frame
 	DebugView         bool
 	DebugPage         int
+	DebugTileOverlay  bool
 	ActiveInteraction *InteractionPopup
 
 	HP, MaxHP           int
@@ -230,6 +231,7 @@ func (e *Engine) Render(
 	var viewerColor int
 	var viewerDebug bool
 	var viewerDebugPage int
+	var viewerTileOverlay bool
 	var viewerHP, viewerMaxHP int
 	var viewerSTA, viewerMaxSTA int
 	var viewerMP, viewerMaxMP int
@@ -242,6 +244,7 @@ func (e *Engine) Render(
 			viewerColor = p.Color
 			viewerDebug = p.DebugView
 			viewerDebugPage = p.DebugPage
+			viewerTileOverlay = p.DebugTileOverlay
 			viewerHP = p.HP
 			viewerMaxHP = p.MaxHP
 			viewerSTA = p.Stamina
@@ -347,6 +350,11 @@ func (e *Engine) Render(
 	// Collapse pixel buffer into half-block cells
 	e.collapsePixelBuf()
 
+	// Tile debug overlay: type letter + (X,Y) on each tile
+	if viewerTileOverlay {
+		e.drawTileOverlay(vp, tileMap)
+	}
+
 	// Draw interaction popup above sign tile (character-based, on top of collapsed cells)
 	if viewerPopup != nil {
 		e.drawInteractionPopupPixel(viewerPopup, vp, termH)
@@ -356,6 +364,67 @@ func (e *Engine) Render(
 	e.drawHUD(viewerName, viewerColor, totalPlayers, tileMap.Name, statsInfo)
 
 	return e.emitDiff()
+}
+
+// --- Tile Debug Overlay ---
+
+// drawTileOverlay renders tile type letter + (X,Y) world coordinates on each visible tile.
+// Toggled with 'T' key. Draws character-based text on top of collapsed half-block cells.
+func (e *Engine) drawTileOverlay(vp PixelViewport, tileMap *maps.Map) {
+	worldRows := e.height - HUDRows
+	if worldRows < 0 {
+		worldRows = 0
+	}
+
+	// Semi-transparent label colors
+	bgR, bgG, bgB := uint8(0), uint8(0), uint8(0)
+	fgR, fgG, fgB := uint8(255), uint8(255), uint8(255)
+
+	setOverlayCell := func(sx, sy int, ch rune) {
+		if sx >= 0 && sx < e.width && sy >= 0 && sy < worldRows {
+			e.next[sy][sx] = Cell{Ch: ch, FgR: fgR, FgG: fgG, FgB: fgB, BgR: bgR, BgG: bgG, BgB: bgB}
+		}
+	}
+
+	for ty := 0; ty < vp.ViewH; ty++ {
+		for tx := 0; tx < vp.ViewW; tx++ {
+			wx := vp.CamX + tx
+			wy := vp.CamY + ty
+
+			if wx < 0 || wx >= tileMap.Width || wy < 0 || wy >= tileMap.Height {
+				continue
+			}
+
+			tile := tileMap.TileAt(wx, wy)
+
+			// Screen position of this tile (in char coords)
+			screenX := (vp.OffsetX + tx*PixelTileW)    // pixel X = char X (1:1)
+			screenY := (vp.OffsetY + ty*PixelTileH) / 2 // pixel Y → char row (2 pixels per row)
+
+			// Tile type letter — first char of name, uppercased
+			letter := '?'
+			if len(tile.Name) > 0 {
+				r := rune(tile.Name[0])
+				if r >= 'a' && r <= 'z' {
+					r -= 32
+				}
+				letter = r
+			}
+
+			// Center the letter in the tile (CharTileW=16 wide, CharTileH=8 tall)
+			centerX := screenX + CharTileW/2
+			centerY := screenY + CharTileH/2 - 1
+			setOverlayCell(centerX, centerY, letter)
+
+			// (X,Y) coordinates below the letter
+			coordStr := fmt.Sprintf("%d,%d", wx, wy)
+			coordX := screenX + (CharTileW-len(coordStr))/2
+			coordY := centerY + 1
+			for i, r := range coordStr {
+				setOverlayCell(coordX+i, coordY, r)
+			}
+		}
+	}
 }
 
 // --- Interaction Popup ---
@@ -504,7 +573,7 @@ func (e *Engine) drawHUD(playerName string, playerColor, playerCount int, mapNam
 
 	// Row 3: controls
 	row3 := hudY + 3
-	e.writeText(row3, 1, splitCol, "←↑↓→/WASD Move  │  Q Quit", 130, 130, 145, bgR, bgG, bgB, false)
+	e.writeText(row3, 1, splitCol, "←↑↓→/WASD Move  │  T Tiles  │  Q Quit", 130, 130, 145, bgR, bgG, bgB, false)
 
 	// --- Right column: stat bars ---
 	rightStart := splitCol + 2
@@ -860,7 +929,12 @@ func (e *Engine) renderDebugView(viewerColor, page int, tick uint64) string {
 
 			// Sample sprite (center)
 			sx, sy := placeGroup(name, CharTileW)
-			labels = append(labels, labelInfo{sy, sx, name})
+			isBorder := e.sprites.TileIsBorderBlob(name)
+			label := name
+			if isBorder {
+				label = name + " (border)"
+			}
+			labels = append(labels, labelInfo{sy, sx, label})
 			sprite := e.sprites.GetBlobTileSprite(name, 0xFF) // all neighbors = center
 			stampAt(sx, sy+1, sprite, false)
 
@@ -875,12 +949,30 @@ func (e *Engine) renderDebugView(viewerColor, page int, tick uint64) string {
 					screenX := curX + px*CharTileW
 					screenY := gridY + py*CharTileH
 					if blobPattern[py][px] {
-						mask := blobPatMask(px, py)
-						sprite := e.sprites.GetBlobTileSprite(name, mask)
-						stampAt(screenX, screenY, sprite, false)
+						if isBorder {
+							// Border blob: tile itself renders as center
+							center := e.sprites.GetBlobTileSprite(name, 0xFF)
+							stampAt(screenX, screenY, center, false)
+						} else {
+							mask := blobPatMask(px, py)
+							sprite := e.sprites.GetBlobTileSprite(name, mask)
+							stampAt(screenX, screenY, sprite, false)
+						}
 					} else {
-						grassTS := e.sprites.GetTileSprites("grass", tick)
-						stampAt(screenX, screenY, grassTS.Base, false)
+						if isBorder {
+							// Border blob: neighbor renders transition
+							mask := blobPatMask(px, py)
+							if mask != 0 {
+								sprite := e.sprites.GetBorderBlobTileSprite(name, mask)
+								stampAt(screenX, screenY, sprite, false)
+							} else {
+								grassTS := e.sprites.GetTileSprites("grass", tick)
+								stampAt(screenX, screenY, grassTS.Base, false)
+							}
+						} else {
+							grassTS := e.sprites.GetTileSprites("grass", tick)
+							stampAt(screenX, screenY, grassTS.Base, false)
+						}
 					}
 				}
 			}

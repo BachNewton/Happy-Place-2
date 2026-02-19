@@ -126,6 +126,8 @@ Maps are JSON files in `assets/maps/`. See `town.json` for the format. The legen
 
 **Building orientation:** Buildings must face south (door on the south wall). The 3-pass rendering system draws overlays on top of players, so tall tiles visually extend upward. Players approaching from the south walk behind overlays (e.g. tree canopies, future roofs). A north-facing door breaks this — the player would be above the building with no layering benefit.
 
+**Blob tile spacing:** Blob/border-blob tiles (water, path) use a 13-piece tileset that only handles contiguous regions. A non-blob tile (e.g. grass) with blob neighbors on **opposite sides** (N+S or E+W) has no valid sprite — the transition breaks visually. To avoid this: blob tile bodies must be at least 2 tiles wide, and gaps between separate blob bodies must be at least 2 tiles. Never leave a single-tile gap of grass between two path/water regions. Run `go run _tmp/main.go` with the audit script (or visually check with the `T` tile overlay) after editing maps.
+
 ### Tile Types
 
 15 tile types have PNG sprites in `assets/sprites/tiles/`:

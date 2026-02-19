@@ -16,7 +16,8 @@
       "Bash(git merge:*)",
       "Bash(python3:*)",
       "Bash(node -e:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(go test:*)"
     ]
   }
 }

@@ -60,18 +60,22 @@ type tileData struct {
 	blob map[string]PixelSprite
 	// For blob tiles: 8-bit mask -> precomputed composite sprite
 	blobComposite map[uint8]PixelSprite
+	// For border blob tiles: 8-bit mask -> precomputed composite sprite (rendered on neighbors)
+	blobBorderComposite map[uint8]PixelSprite
 
 	frames      int // max frame count
 	hasBase     bool
 	hasDY       map[int]bool // which DY values exist
-	isConnected bool
-	isBlob      bool
+	isConnected  bool
+	isBlob       bool
+	isBorderBlob bool
 }
 
 // SpriteRegistry holds all loaded pixel sprites.
 type SpriteRegistry struct {
-	tiles   map[string]*tileData
-	players [6][4]PixelSprite // [color][dir]
+	tiles          map[string]*tileData
+	players        [6][4]PixelSprite // [color][dir]
+	borderBlobTiles []string          // tile names that use border blob rendering
 }
 
 // NewSpriteRegistry loads all PNGs from the given directory.
@@ -90,6 +94,7 @@ func NewSpriteRegistry(spritesDir string) (*SpriteRegistry, error) {
 
 	// Generate blob composites for all blob tile types
 	reg.generateBlobComposites()
+	reg.generateBorderBlobComposites()
 
 	// Load player sprites and generate palette swaps
 	if err := reg.loadPlayers(playersDir); err != nil {
@@ -177,12 +182,13 @@ func (reg *SpriteRegistry) parseTileSprite(name string, sprite PixelSprite) {
 	td := reg.tiles[tileName]
 	if td == nil {
 		td = &tileData{
-			sprites:       make(map[int]PixelSprite),
-			parts:         make(map[string]map[int]PixelSprite),
-			connected:     make(map[string]PixelSprite),
-			blob:          make(map[string]PixelSprite),
-			blobComposite: make(map[uint8]PixelSprite),
-			hasDY:         make(map[int]bool),
+			sprites:             make(map[int]PixelSprite),
+			parts:               make(map[string]map[int]PixelSprite),
+			connected:           make(map[string]PixelSprite),
+			blob:                make(map[string]PixelSprite),
+			blobComposite:       make(map[uint8]PixelSprite),
+			blobBorderComposite: make(map[uint8]PixelSprite),
+			hasDY:               make(map[int]bool),
 		}
 		reg.tiles[tileName] = td
 	}
@@ -541,6 +547,105 @@ func (reg *SpriteRegistry) generateBlobComposites() {
 			td.blobComposite[m] = composite
 		}
 	}
+}
+
+// generateBorderBlobComposites marks border blob tiles and pre-generates
+// all 256 possible border composites using flipped edge/corner mapping.
+func (reg *SpriteRegistry) generateBorderBlobComposites() {
+	borderBlobNames := []string{"path"}
+	for _, name := range borderBlobNames {
+		td := reg.tiles[name]
+		if td == nil || !td.isBlob {
+			continue
+		}
+		td.isBorderBlob = true
+		reg.borderBlobTiles = append(reg.borderBlobTiles, name)
+	}
+
+	for _, name := range reg.borderBlobTiles {
+		td := reg.tiles[name]
+		center, hasCenter := td.blob["center"]
+		if !hasCenter {
+			continue
+		}
+
+		for mask := 0; mask < 256; mask++ {
+			m := uint8(mask)
+			parts := borderBlobMaskToParts(m)
+			if parts == nil {
+				continue
+			}
+
+			if len(parts) == 1 {
+				if s, ok := td.blob[parts[0]]; ok {
+					td.blobBorderComposite[m] = s
+				} else {
+					td.blobBorderComposite[m] = center
+				}
+				continue
+			}
+
+			// Multi-part composite (inner corners): start with center, overlay
+			composite := center
+			for _, partName := range parts {
+				inner, ok := td.blob[partName]
+				if !ok {
+					continue
+				}
+				for y := 0; y < PixelTileH; y++ {
+					for x := 0; x < PixelTileW; x++ {
+						ip := inner[y][x]
+						cp := center[y][x]
+						if ip != cp {
+							composite[y][x] = ip
+						}
+					}
+				}
+			}
+			td.blobBorderComposite[m] = composite
+		}
+	}
+}
+
+// TileIsBorderBlob returns whether a tile type uses border blob rendering
+// (transitions render on neighboring tiles, not on the tile itself).
+func (reg *SpriteRegistry) TileIsBorderBlob(name string) bool {
+	td := reg.tiles[name]
+	if td == nil {
+		return false
+	}
+	return td.isBorderBlob
+}
+
+// BorderBlobNames returns the list of border blob tile names.
+func (reg *SpriteRegistry) BorderBlobNames() []string {
+	return reg.borderBlobTiles
+}
+
+// GetBorderBlobTileSprite returns a precomputed border blob composite
+// for the given 8-bit neighbor mask.
+func (reg *SpriteRegistry) GetBorderBlobTileSprite(tileName string, mask uint8) PixelSprite {
+	td := reg.tiles[tileName]
+	if td == nil {
+		return FillPixelSprite(255, 0, 255)
+	}
+	if s, ok := td.blobBorderComposite[mask]; ok {
+		return s
+	}
+	if s, ok := td.blob["center"]; ok {
+		return s
+	}
+	return FillPixelSprite(255, 0, 255)
+}
+
+// GetBlobPartSprite returns a raw blob part sprite by name (e.g., "outer_nw").
+func (reg *SpriteRegistry) GetBlobPartSprite(tileName, partName string) (PixelSprite, bool) {
+	td := reg.tiles[tileName]
+	if td == nil {
+		return PixelSprite{}, false
+	}
+	s, ok := td.blob[partName]
+	return s, ok
 }
 
 // loadPlayers loads the 4 direction templates and generates palette swaps.

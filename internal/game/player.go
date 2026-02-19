@@ -17,6 +17,7 @@ const (
 	ActionConfirm
 	ActionDefend
 	ActionDebugCombat
+	ActionDebugTileOverlay
 )
 
 // Direction the player is facing.
@@ -65,6 +66,7 @@ type Player struct {
 	MoveCooldown      int // ticks until next move allowed
 	DebugView         bool
 	DebugPage         int
+	DebugTileOverlay  bool
 	ActiveInteraction *ActiveInteraction
 
 	// Stats
@@ -127,6 +129,7 @@ type PlayerSnapshot struct {
 	AnimFrame         int
 	DebugView         bool
 	DebugPage         int
+	DebugTileOverlay  bool
 	ActiveInteraction *ActiveInteraction
 
 	HP, MaxHP           int
@@ -153,6 +156,7 @@ func (p *Player) Snapshot() PlayerSnapshot {
 		AnimFrame:         p.AnimFrame,
 		DebugView:         p.DebugView,
 		DebugPage:         p.DebugPage,
+		DebugTileOverlay:  p.DebugTileOverlay,
 		ActiveInteraction: p.ActiveInteraction,
 		HP:                p.HP,
 		MaxHP:             p.MaxHP,

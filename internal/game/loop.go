@@ -328,6 +328,12 @@ func (gl *GameLoop) processInput(ev InputEvent) {
 		return
 	}
 
+	// Toggle tile debug overlay
+	if ev.Action == ActionDebugTileOverlay {
+		player.DebugTileOverlay = !player.DebugTileOverlay
+		return
+	}
+
 	// Debug: force-start combat encounter from anywhere
 	if ev.Action == ActionDebugCombat {
 		if player.FightID == 0 && !player.Dead {

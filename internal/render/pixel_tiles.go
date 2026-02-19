@@ -13,9 +13,28 @@ func PixelTileSprite(reg *SpriteRegistry, tile maps.TileDef, wx, wy int, tick ui
 		return PixelTileSprites{Base: FillPixelSprite(fgR, fgG, fgB)}
 	}
 
+	// Border blob self: render as plain center fill
+	if reg.TileIsBorderBlob(name) {
+		return PixelTileSprites{Base: reg.GetBlobTileSprite(name, 0xFF)}
+	}
+
 	if reg.TileIsBlob(name) {
 		mask := blobNeighborMask(name, wx, wy, m)
 		return PixelTileSprites{Base: reg.GetBlobTileSprite(name, mask)}
+	}
+
+	// Check if this tile neighbors a border blob tile (cardinal neighbors)
+	for _, bbName := range reg.BorderBlobNames() {
+		mask := blobNeighborMask(bbName, wx, wy, m)
+		if mask != 0 {
+			return PixelTileSprites{Base: reg.GetBorderBlobTileSprite(bbName, mask)}
+		}
+		// Diagonal-only: outer corner rounding at path convex corners
+		if part := borderBlobOuterCorner(bbName, wx, wy, m); part != "" {
+			if sprite, ok := reg.GetBlobPartSprite(bbName, part); ok {
+				return PixelTileSprites{Base: sprite}
+			}
+		}
 	}
 
 	if reg.TileIsConnected(name) {

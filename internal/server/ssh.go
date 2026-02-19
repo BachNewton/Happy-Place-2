@@ -152,6 +152,7 @@ func (s *SSHServer) handleSession(sess ssh.Session) {
 					AnimFrame: p.AnimFrame,
 					DebugView: p.DebugView,
 					DebugPage: p.DebugPage,
+					DebugTileOverlay: p.DebugTileOverlay,
 					HP:        p.HP,
 					MaxHP:     p.MaxHP,
 					Stamina:   p.Stamina,
@@ -269,6 +270,8 @@ func parseInput(data []byte) []game.Action {
 			actions = append(actions, game.ActionDebugPage3)
 		case '4':
 			actions = append(actions, game.ActionDefend)
+		case 't', 'T':
+			actions = append(actions, game.ActionDebugTileOverlay)
 		case '\r', '\n': // Enter key
 			actions = append(actions, game.ActionConfirm)
 		case 3: // Ctrl-C
