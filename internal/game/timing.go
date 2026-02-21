@@ -11,6 +11,8 @@ func SecsToTicks(s float64) int {
 	return t
 }
 
+const SlideTilePixels = 16 // must match render.PixelTileW
+
 // Timing constants — all expressed in seconds, converted to ticks at init.
 var (
 	MoveRepeatDelay   = SecsToTicks(0.15) // min ticks between moves when holding a key

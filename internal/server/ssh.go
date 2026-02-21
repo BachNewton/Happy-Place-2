@@ -150,6 +150,8 @@ func (s *SSHServer) handleSession(sess ssh.Session) {
 					Dir:       int(p.Dir),
 					Anim:      int(p.Anim),
 					AnimFrame: p.AnimFrame,
+					SlideOffsetX: p.SlideOffsetX,
+					SlideOffsetY: p.SlideOffsetY,
 					DebugView: p.DebugView,
 					DebugPage: p.DebugPage,
 					DebugTileOverlay: p.DebugTileOverlay,

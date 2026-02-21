@@ -64,6 +64,9 @@ type Player struct {
 	AnimTimer    int // ticks remaining in walk state
 	AnimTick     int // ticks since last frame advance
 	MoveCooldown      int // ticks until next move allowed
+	SlideTicksLeft    int // ticks remaining in slide interpolation
+	SlideDirX         int // movement direction X (-1, 0, +1)
+	SlideDirY         int // movement direction Y (-1, 0, +1)
 	DebugView         bool
 	DebugPage         int
 	DebugTileOverlay  bool
@@ -137,13 +140,19 @@ type PlayerSnapshot struct {
 	MP, MaxMP           int
 	EXP                 int
 	Level               int
-	FightID             int
-	CombatTransition    int
-	Dead                bool
+	SlideOffsetX, SlideOffsetY int
+	FightID                    int
+	CombatTransition           int
+	Dead                       bool
 }
 
 // Snapshot returns a read-only copy of the player.
 func (p *Player) Snapshot() PlayerSnapshot {
+	var slideX, slideY int
+	if p.SlideTicksLeft > 0 && MoveRepeatDelay > 0 {
+		slideX = -p.SlideDirX * SlideTilePixels * p.SlideTicksLeft / MoveRepeatDelay
+		slideY = -p.SlideDirY * SlideTilePixels * p.SlideTicksLeft / MoveRepeatDelay
+	}
 	return PlayerSnapshot{
 		ID:                p.ID,
 		Name:              p.Name,
@@ -166,6 +175,8 @@ func (p *Player) Snapshot() PlayerSnapshot {
 		MaxMP:             p.MaxMP,
 		EXP:               p.EXP,
 		Level:             p.Level(),
+		SlideOffsetX:      slideX,
+		SlideOffsetY:      slideY,
 		FightID:           p.FightID,
 		CombatTransition:  p.CombatTransition,
 		Dead:              p.Dead,

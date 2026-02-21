@@ -10,17 +10,18 @@ type PixelViewport struct {
 }
 
 // NewPixelViewport calculates the camera position centered on the player,
-// clamped to map edges. Uses CharTileW cols x CharTileH rows per tile for
-// screen-space calculations, but PixelTileW x PixelTileH for pixel-space.
-func NewPixelViewport(playerX, playerY, termW, termH, mapW, mapH, hudRows int) PixelViewport {
+// clamped to map edges. slidePixelX/slidePixelY are the player's interpolation
+// offsets in pixels, used to smooth the camera during movement.
+func NewPixelViewport(playerX, playerY, slidePixelX, slidePixelY, termW, termH, mapW, mapH, hudRows int) PixelViewport {
 	screenW := termW
 	screenH := termH - hudRows
 	// Screen height in pixels (2 pixels per row)
 	screenPixH := screenH * 2
 
 	// Center player's tile center on screen center (in char-space for X, pixel-space for Y)
-	camCharX := playerX*CharTileW + CharTileW/2 - screenW/2
-	camPixelY := playerY*PixelTileH + PixelTileH/2 - screenPixH/2
+	// Add slide offset so camera follows the interpolated position smoothly
+	camCharX := playerX*CharTileW + CharTileW/2 - screenW/2 + slidePixelX
+	camPixelY := playerY*PixelTileH + PixelTileH/2 - screenPixH/2 + slidePixelY
 
 	// Clamp to map edges
 	maxCharX := mapW*CharTileW - screenW

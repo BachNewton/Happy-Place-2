@@ -191,6 +191,15 @@ func (gl *GameLoop) Stop() {
 }
 
 func (gl *GameLoop) tick() {
+	// Decay slide interpolation ticks (before input drain)
+	gl.mu.RLock()
+	for _, p := range gl.players {
+		if p.SlideTicksLeft > 0 {
+			p.SlideTicksLeft--
+		}
+	}
+	gl.mu.RUnlock()
+
 	// Drain all pending input events
 	for {
 		select {
@@ -409,12 +418,16 @@ func (gl *GameLoop) processInput(ev InputEvent) {
 
 	canMove := gl.world.CanMoveTo(player.MapName, newX, newY)
 	if canMove {
+		oldX, oldY := player.X, player.Y
 		player.X = newX
 		player.Y = newY
 		player.Anim = AnimWalking
 		player.AnimTimer = WalkAnimDuration
 		player.MoveCooldown = MoveRepeatDelay
 		player.AnimTick = 0
+		player.SlideTicksLeft = MoveRepeatDelay
+		player.SlideDirX = newX - oldX
+		player.SlideDirY = newY - oldY
 
 		// Check for portal at new position
 		portal := gl.world.PortalAt(player.MapName, newX, newY)
@@ -422,6 +435,7 @@ func (gl *GameLoop) processInput(ev InputEvent) {
 			player.MapName = portal.TargetMap
 			player.X = portal.TargetX
 			player.Y = portal.TargetY
+			player.SlideTicksLeft = 0
 		} else {
 			// Check for encounter on tall_grass
 			gl.checkEncounter(player)
@@ -731,6 +745,7 @@ func (gl *GameLoop) resolveFightDefeat(fight *Fight) {
 			p.MapName = mapName
 			p.X = spawnX
 			p.Y = spawnY
+			p.SlideTicksLeft = 0
 		}
 	}
 }

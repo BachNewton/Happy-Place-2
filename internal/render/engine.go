@@ -33,6 +33,8 @@ type PlayerInfo struct {
 	Dir               int // 0=down, 1=up, 2=left, 3=right
 	Anim              int // 0=idle, 1=walking
 	AnimFrame         int // current animation frame
+	SlideOffsetX      int
+	SlideOffsetY      int
 	DebugView         bool
 	DebugPage         int
 	DebugTileOverlay  bool
@@ -250,6 +252,7 @@ func (e *Engine) Render(
 
 	// Find the viewer
 	var viewerX, viewerY int
+	var viewerSlideX, viewerSlideY int
 	var viewerName string
 	var viewerColor int
 	var viewerDebug bool
@@ -263,6 +266,8 @@ func (e *Engine) Render(
 		if p.ID == viewerID {
 			viewerX = p.X
 			viewerY = p.Y
+			viewerSlideX = p.SlideOffsetX
+			viewerSlideY = p.SlideOffsetY
 			viewerName = p.Name
 			viewerColor = p.Color
 			viewerDebug = p.DebugView
@@ -310,7 +315,7 @@ func (e *Engine) Render(
 		return e.renderCombatView(combat, viewerName, viewerColor, totalPlayers, tick, statsInfo)
 	}
 
-	vp := NewPixelViewport(viewerX, viewerY, termW, termH, tileMap.Width, tileMap.Height, HUDRows)
+	vp := NewPixelViewport(viewerX, viewerY, viewerSlideX, viewerSlideY, termW, termH, tileMap.Width, tileMap.Height, HUDRows)
 
 	// Clear pixel buffer with background color
 	e.clearPixelBuf(10, 10, 15)
@@ -356,6 +361,8 @@ func (e *Engine) Render(
 	var viewerPopup *InteractionPopup
 	for _, p := range players {
 		px, py := vp.WorldToPixel(p.X, p.Y)
+		px += p.SlideOffsetX
+		py += p.SlideOffsetY
 		// Cull: account for 4 extra pixels above tile (hair)
 		extraAbove := PlayerSpriteH - PixelTileH
 		if px+PixelTileW <= 0 || px >= e.pixBufW || py+PixelTileH <= 0 || (py-extraAbove) >= e.pixBufH {
