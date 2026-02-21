@@ -387,13 +387,10 @@ func (gl *GameLoop) processInput(ev InputEvent) {
 		return
 	}
 
-	// If facing a different direction, just turn (no move, no cooldown)
-	if player.Dir != dir {
-		player.Dir = dir
-		return
-	}
+	// Always face the desired direction
+	player.Dir = dir
 
-	// Already facing this direction — attempt movement
+	// Attempt movement
 	if player.MoveCooldown > 0 {
 		return
 	}
