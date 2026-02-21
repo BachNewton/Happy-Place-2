@@ -28,10 +28,11 @@ const PlayerSpriteH = 20
 // 4 pixels taller than a tile sprite to accommodate hair above the tile boundary.
 type PlayerSprite [PlayerSpriteH][PixelTileW]Pixel
 
-// PixelOverlay is a pixel sprite rendered at a vertical offset above its owning tile.
+// PixelOverlay is a pixel sprite rendered at an offset from its owning tile.
 type PixelOverlay struct {
 	Sprite PixelSprite
 	DY     int // tile units upward (1 = one tile above base)
+	DX     int // tile units horizontal (-1 = one tile left, +1 = one tile right)
 }
 
 // PixelTileSprites holds the base pixel sprite and optional overlay layers.

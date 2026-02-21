@@ -101,7 +101,7 @@ type tileData struct {
 
 	frames      int // max frame count
 	hasBase     bool
-	hasDY       map[int]bool // which DY values exist
+	hasDYDX     map[[2]int]bool // which (DY, DX) pairs exist
 	isConnected  bool
 	isBlob       bool
 	isBorderBlob bool
@@ -193,7 +193,7 @@ func (reg *SpriteRegistry) parseTileSprite(name string, sprite PixelSprite) {
 				continue
 			}
 		}
-		if parts[i] == "base" || strings.HasPrefix(parts[i], "dy") {
+		if parts[i] == "base" || strings.HasPrefix(parts[i], "dy") || strings.HasPrefix(parts[i], "dx") {
 			continue
 		}
 		if parts[i] == "blob" || parts[i] == "edge" || parts[i] == "outer" || parts[i] == "inner" || parts[i] == "center" {
@@ -225,7 +225,7 @@ func (reg *SpriteRegistry) parseTileSprite(name string, sprite PixelSprite) {
 			blob:                make(map[string]PixelSprite),
 			blobComposite:       make(map[uint8]PixelSprite),
 			blobBorderComposite: make(map[uint8]PixelSprite),
-			hasDY:               make(map[int]bool),
+			hasDYDX:             make(map[[2]int]bool),
 		}
 		reg.tiles[tileName] = td
 	}
@@ -297,7 +297,7 @@ func (reg *SpriteRegistry) parseTileSprite(name string, sprite PixelSprite) {
 		// Tall DY: tree_0_dy1.png
 		if strings.HasPrefix(part, "dy") {
 			if dy, err := strconv.Atoi(part[2:]); err == nil {
-				td.hasDY[dy] = true
+				td.hasDYDX[[2]int{dy, 0}] = true
 				partMap := td.parts[part]
 				if partMap == nil {
 					partMap = make(map[int]PixelSprite)
@@ -306,6 +306,40 @@ func (reg *SpriteRegistry) parseTileSprite(name string, sprite PixelSprite) {
 				partMap[frame] = sprite
 				return
 			}
+		}
+	}
+
+	// Tall DY+DX: tree_large_0_dy2_dxn1.png, tree_large_0_dy1_dx1.png
+	if len(remaining) == 2 {
+		dyPart := remaining[0]
+		dxPart := remaining[1]
+		if strings.HasPrefix(dyPart, "dy") && strings.HasPrefix(dxPart, "dx") {
+			dy, err := strconv.Atoi(dyPart[2:])
+			if err != nil {
+				return
+			}
+			var dx int
+			if strings.HasPrefix(dxPart, "dxn") {
+				dx, err = strconv.Atoi(dxPart[3:])
+				if err != nil {
+					return
+				}
+				dx = -dx
+			} else {
+				dx, err = strconv.Atoi(dxPart[2:])
+				if err != nil {
+					return
+				}
+			}
+			td.hasDYDX[[2]int{dy, dx}] = true
+			partName := dyPart + "_" + dxPart
+			partMap := td.parts[partName]
+			if partMap == nil {
+				partMap = make(map[int]PixelSprite)
+				td.parts[partName] = partMap
+			}
+			partMap[frame] = sprite
+			return
 		}
 	}
 }
@@ -333,18 +367,31 @@ func (reg *SpriteRegistry) GetTileSprites(tileName string, tick uint64) PixelTil
 	frame := int(tick/8) % frameCount
 
 	if td.hasBase {
-		// Tall tile
+		// Tall tile (possibly with horizontal DX offsets)
 		base := reg.getTilePart(td, "base", frame)
 		var overlays []PixelOverlay
-		dyValues := make([]int, 0, len(td.hasDY))
-		for dy := range td.hasDY {
-			dyValues = append(dyValues, dy)
+		type dyDX struct{ dy, dx int }
+		pairs := make([]dyDX, 0, len(td.hasDYDX))
+		for key := range td.hasDYDX {
+			pairs = append(pairs, dyDX{key[0], key[1]})
 		}
-		sort.Ints(dyValues)
-		for _, dy := range dyValues {
-			partName := fmt.Sprintf("dy%d", dy)
+		sort.Slice(pairs, func(i, j int) bool {
+			if pairs[i].dy != pairs[j].dy {
+				return pairs[i].dy < pairs[j].dy
+			}
+			return pairs[i].dx < pairs[j].dx
+		})
+		for _, p := range pairs {
+			var partName string
+			if p.dx == 0 {
+				partName = fmt.Sprintf("dy%d", p.dy)
+			} else if p.dx < 0 {
+				partName = fmt.Sprintf("dy%d_dxn%d", p.dy, -p.dx)
+			} else {
+				partName = fmt.Sprintf("dy%d_dx%d", p.dy, p.dx)
+			}
 			s := reg.getTilePart(td, partName, frame)
-			overlays = append(overlays, PixelOverlay{Sprite: s, DY: dy})
+			overlays = append(overlays, PixelOverlay{Sprite: s, DY: p.dy, DX: p.dx})
 		}
 		return PixelTileSprites{Base: base, Overlays: overlays}
 	}

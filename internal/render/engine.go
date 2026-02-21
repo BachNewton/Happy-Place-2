@@ -317,6 +317,7 @@ func (e *Engine) Render(
 
 	// --- Pass 1: Ground tiles + collect overlays ---
 	const maxOverlayDY = 3 // scan extra rows below viewport for tiles whose overlays reach in
+	const maxOverlayDX = 1 // scan extra columns for tiles whose DX overlays reach in
 
 	type pendingPixelOverlay struct {
 		px, py int
@@ -326,7 +327,7 @@ func (e *Engine) Render(
 
 	scanH := vp.ViewH + maxOverlayDY
 	for ty := 0; ty < scanH; ty++ {
-		for tx := 0; tx < vp.ViewW; tx++ {
+		for tx := -maxOverlayDX; tx < vp.ViewW+maxOverlayDX; tx++ {
 			wx := vp.CamX + tx
 			wy := vp.CamY + ty
 			if wx < 0 || wx >= tileMap.Width || wy < 0 || wy >= tileMap.Height {
@@ -338,14 +339,15 @@ func (e *Engine) Render(
 			py := vp.OffsetY + ty*PixelTileH
 
 			// Only stamp base for tiles within the visible viewport
-			if ty < vp.ViewH {
+			if ty < vp.ViewH && tx >= 0 && tx < vp.ViewW {
 				e.stampPixelSprite(px, py, ts.Base, false)
 			}
 
 			// Collect overlays — rendered after players
 			for _, ov := range ts.Overlays {
+				ovPX := px + ov.DX*PixelTileW
 				ovPY := py - ov.DY*PixelTileH
-				overlays = append(overlays, pendingPixelOverlay{px: px, py: ovPY, sprite: ov.Sprite})
+				overlays = append(overlays, pendingPixelOverlay{px: ovPX, py: ovPY, sprite: ov.Sprite})
 			}
 		}
 	}
@@ -808,20 +810,29 @@ func (e *Engine) renderDebugView(viewerColor, page int, tick uint64) string {
 
 			ts := e.sprites.GetTileSprites(name, tick)
 			maxDY := 0
+			minDX, maxDX := 0, 0
 			for _, ov := range ts.Overlays {
 				if ov.DY > maxDY {
 					maxDY = ov.DY
 				}
+				if ov.DX < minDX {
+					minDX = ov.DX
+				}
+				if ov.DX > maxDX {
+					maxDX = ov.DX
+				}
 			}
 			overlayCharRows := maxDY * CharTileH
+			groupW := (maxDX - minDX + 1) * CharTileW
 
-			sx, sy := placeGroup(name, CharTileW)
+			sx, sy := placeGroup(name, groupW)
 			labels = append(labels, labelInfo{sy, sx, name})
 
+			baseCharX := sx + (-minDX)*CharTileW
 			baseY := sy + 1 + overlayCharRows
-			stampAt(sx, baseY, ts.Base, false)
+			stampAt(baseCharX, baseY, ts.Base, false)
 			for _, ov := range ts.Overlays {
-				stampAt(sx, baseY-ov.DY*CharTileH, ov.Sprite, true)
+				stampAt(baseCharX+ov.DX*CharTileW, baseY-ov.DY*CharTileH, ov.Sprite, true)
 			}
 
 			if overlayCharRows > 0 {

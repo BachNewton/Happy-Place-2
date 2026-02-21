@@ -39,7 +39,7 @@
     "0": {"char": ".", "fg": "green", "walkable": true, "name": "grass"},
     "1": {"char": "#", "fg": "gray", "walkable": false, "name": "wall"},
     "2": {"char": "~", "fg": "blue", "walkable": false, "name": "water"},
-    "3": {"char": "T", "fg": "green", "walkable": false, "name": "tree"},
+    "3": {"char": "T", "fg": "green", "walkable": false, "name": "tree_large"},
     "4": {"char": ".", "fg": "yellow", "walkable": true, "name": "path"},
     "5": {"char": "+", "fg": "bright_yellow", "walkable": true, "name": "door"},
     "6": {"char": ".", "fg": "bright_white", "walkable": true, "name": "floor"},

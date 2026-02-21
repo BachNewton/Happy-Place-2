@@ -254,6 +254,6 @@ func borderBlobOuterCorner(name string, wx, wy int, m *maps.Map) string {
 // tileNameOrder defines the display order for tile types in the debug view.
 // Matches the order from the original tileList.
 var tileNameOrder = []string{
-	"grass", "wall", "water", "tree", "path", "door", "floor",
+	"grass", "wall", "water", "tree", "tree_large", "path", "door", "floor",
 	"fence", "flowers", "tall_grass",
 }
