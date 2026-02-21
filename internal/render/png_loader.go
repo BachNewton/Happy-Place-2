@@ -552,7 +552,7 @@ func (reg *SpriteRegistry) generateBlobComposites() {
 // generateBorderBlobComposites marks border blob tiles and pre-generates
 // all 256 possible border composites using flipped edge/corner mapping.
 func (reg *SpriteRegistry) generateBorderBlobComposites() {
-	borderBlobNames := []string{"path"}
+	borderBlobNames := []string{"path", "water"}
 	for _, name := range borderBlobNames {
 		td := reg.tiles[name]
 		if td == nil || !td.isBlob {

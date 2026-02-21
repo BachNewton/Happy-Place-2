@@ -1,7 +1,81 @@
 {
-  "name": "Forest",
-  "width": 60,
   "height": 30,
+  "legend": {
+    "0": {
+      "char": ".",
+      "fg": "green",
+      "name": "grass",
+      "walkable": true
+    },
+    "2": {
+      "char": "~",
+      "fg": "blue",
+      "name": "water",
+      "walkable": false
+    },
+    "3": {
+      "char": "T",
+      "fg": "green",
+      "name": "tree",
+      "walkable": false
+    },
+    "4": {
+      "char": ".",
+      "fg": "yellow",
+      "name": "path",
+      "walkable": true
+    },
+    "8": {
+      "char": "*",
+      "fg": "bright_red",
+      "name": "flowers",
+      "walkable": true
+    },
+    "9": {
+      "char": ";",
+      "fg": "green",
+      "name": "tall_grass",
+      "walkable": true
+    }
+  },
+  "name": "Forest",
+  "portals": [
+    {
+      "target_map": "Town Square",
+      "target_x": 58,
+      "target_y": 13,
+      "x": 0,
+      "y": 13
+    },
+    {
+      "target_map": "Town Square",
+      "target_x": 58,
+      "target_y": 14,
+      "x": 0,
+      "y": 14
+    },
+    {
+      "target_map": "Town Square",
+      "target_x": 58,
+      "target_y": 15,
+      "x": 0,
+      "y": 15
+    },
+    {
+      "target_map": "Town Square",
+      "target_x": 58,
+      "target_y": 16,
+      "x": 0,
+      "y": 16
+    },
+    {
+      "target_map": "Town Square",
+      "target_x": 58,
+      "target_y": 17,
+      "x": 0,
+      "y": 17
+    }
+  ],
   "spawn": {
     "x": 30,
     "y": 15
@@ -943,7 +1017,7 @@
       4,
       4,
       9,
-      9,
+      4,
       9,
       9,
       9,
@@ -1868,79 +1942,5 @@
       3
     ]
   ],
-  "legend": {
-    "0": {
-      "char": ".",
-      "fg": "green",
-      "walkable": true,
-      "name": "grass"
-    },
-    "2": {
-      "char": "~",
-      "fg": "blue",
-      "walkable": false,
-      "name": "water"
-    },
-    "3": {
-      "char": "T",
-      "fg": "green",
-      "walkable": false,
-      "name": "tree"
-    },
-    "4": {
-      "char": ".",
-      "fg": "yellow",
-      "walkable": true,
-      "name": "path"
-    },
-    "8": {
-      "char": "*",
-      "fg": "bright_red",
-      "walkable": true,
-      "name": "flowers"
-    },
-    "9": {
-      "char": ";",
-      "fg": "green",
-      "walkable": true,
-      "name": "tall_grass"
-    }
-  },
-  "portals": [
-    {
-      "x": 0,
-      "y": 13,
-      "target_map": "Town Square",
-      "target_x": 58,
-      "target_y": 13
-    },
-    {
-      "x": 0,
-      "y": 14,
-      "target_map": "Town Square",
-      "target_x": 58,
-      "target_y": 14
-    },
-    {
-      "x": 0,
-      "y": 15,
-      "target_map": "Town Square",
-      "target_x": 58,
-      "target_y": 15
-    },
-    {
-      "x": 0,
-      "y": 16,
-      "target_map": "Town Square",
-      "target_x": 58,
-      "target_y": 16
-    },
-    {
-      "x": 0,
-      "y": 17,
-      "target_map": "Town Square",
-      "target_x": 58,
-      "target_y": 17
-    }
-  ]
+  "width": 60
 }
