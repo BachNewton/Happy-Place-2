@@ -48,6 +48,42 @@ func LoadPixelSprite(path string) (PixelSprite, error) {
 	return ps, nil
 }
 
+// LoadPlayerSprite reads a 16x20 PNG and returns a PlayerSprite.
+func LoadPlayerSprite(path string) (PlayerSprite, error) {
+	var ps PlayerSprite
+
+	f, err := os.Open(path)
+	if err != nil {
+		return ps, fmt.Errorf("open %s: %w", path, err)
+	}
+	defer f.Close()
+
+	img, err := png.Decode(f)
+	if err != nil {
+		return ps, fmt.Errorf("decode %s: %w", path, err)
+	}
+
+	bounds := img.Bounds()
+	if bounds.Dx() != PixelTileW || bounds.Dy() != PlayerSpriteH {
+		return ps, fmt.Errorf("%s: expected %dx%d, got %dx%d", path, PixelTileW, PlayerSpriteH, bounds.Dx(), bounds.Dy())
+	}
+
+	for y := 0; y < PlayerSpriteH; y++ {
+		for x := 0; x < PixelTileW; x++ {
+			r, g, b, a := img.At(bounds.Min.X+x, bounds.Min.Y+y).RGBA()
+			r8, g8, b8 := uint8(r>>8), uint8(g>>8), uint8(b>>8)
+
+			if a < 0x8000 || (r8 == 0xFF && g8 == 0x00 && b8 == 0xFF) {
+				ps[y][x] = TransparentPixel()
+			} else {
+				ps[y][x] = P(r8, g8, b8)
+			}
+		}
+	}
+
+	return ps, nil
+}
+
 // tileData holds all loaded sprites for a single tile type.
 type tileData struct {
 	// For simple/animated tiles: frame -> PixelSprite
@@ -73,9 +109,10 @@ type tileData struct {
 
 // SpriteRegistry holds all loaded pixel sprites.
 type SpriteRegistry struct {
-	tiles          map[string]*tileData
-	players        [6][4]PixelSprite // [color][dir]
-	borderBlobTiles []string          // tile names that use border blob rendering
+	tiles           map[string]*tileData
+	idlePlayers     [6][4][]PlayerSprite // [color][dir][frame]
+	walkPlayers     [6][4][]PlayerSprite // [color][dir][frame]
+	borderBlobTiles []string             // tile names that use border blob rendering
 }
 
 // NewSpriteRegistry loads all PNGs from the given directory.
@@ -648,68 +685,143 @@ func (reg *SpriteRegistry) GetBlobPartSprite(tileName, partName string) (PixelSp
 	return s, ok
 }
 
-// loadPlayers loads the 4 direction templates and generates palette swaps.
+// Palette swap source colors in the Cute Fantasy player sprites.
+// Shirt colors (green family):
+//   #33984B (bright green) — shirt highlight
+//   #1E6F50 (dark green)   — shirt shadow
+// Pants colors (blue family):
+//   #0098DC (bright blue)  — pants highlight
+//   #0069AA (dark blue)    — pants mid
+//   #134C4C (darkest teal) — pants shadow
+type paletteEntry struct {
+	r, g, b uint8
+	scale   float64 // multiplier applied to target color
+}
+
+var paletteSwapTable = []paletteEntry{
+	{0x33, 0x98, 0x4B, 1.0},  // shirt bright → target
+	{0x1E, 0x6F, 0x50, 0.60}, // shirt dark   → target × 0.6
+	{0x00, 0x98, 0xDC, 0.70}, // pants bright → target × 0.7
+	{0x00, 0x69, 0xAA, 0.45}, // pants dark   → target × 0.45
+	{0x13, 0x4C, 0x4C, 0.25}, // pants shadow → target × 0.25
+}
+
+func swapPlayerPixel(px Pixel, targetR, targetG, targetB uint8) Pixel {
+	for _, pe := range paletteSwapTable {
+		if px.R == pe.r && px.G == pe.g && px.B == pe.b {
+			return P(
+				uint8(float64(targetR)*pe.scale),
+				uint8(float64(targetG)*pe.scale),
+				uint8(float64(targetB)*pe.scale),
+			)
+		}
+	}
+	return px
+}
+
+// loadPlayers loads animated player sprite templates and generates palette swaps.
+// Idle: player_{dir}_f{N}.png (6 frames × 4 dirs)
+// Walk: player_walk_{dir}_f{N}.png (6 frames × 4 dirs)
 func (reg *SpriteRegistry) loadPlayers(dir string) error {
 	dirNames := []string{"down", "up", "left", "right"}
-	var templates [4]PixelSprite
-	var loaded [4]bool
 
-	for i, dName := range dirNames {
-		path := filepath.Join(dir, "player_"+dName+".png")
-		sprite, err := LoadPixelSprite(path)
-		if err != nil {
-			log.Printf("Warning: player sprite %s not found, using placeholder", path)
-			templates[i] = FillPixelSprite(200, 60, 60) // red placeholder
-			continue
+	// Load templates: idleTemplates[dir][frame], walkTemplates[dir][frame]
+	var idleTemplates [4][]PlayerSprite
+	var walkTemplates [4][]PlayerSprite
+
+	for d, dName := range dirNames {
+		// Load idle frames
+		for frame := 0; ; frame++ {
+			path := filepath.Join(dir, fmt.Sprintf("player_%s_f%d.png", dName, frame))
+			sprite, err := LoadPlayerSprite(path)
+			if err != nil {
+				break
+			}
+			idleTemplates[d] = append(idleTemplates[d], sprite)
 		}
-		templates[i] = sprite
-		loaded[i] = true
+		if len(idleTemplates[d]) == 0 {
+			log.Printf("Warning: no idle player sprites for direction %s", dName)
+		}
+
+		// Load walk frames
+		for frame := 0; ; frame++ {
+			path := filepath.Join(dir, fmt.Sprintf("player_walk_%s_f%d.png", dName, frame))
+			sprite, err := LoadPlayerSprite(path)
+			if err != nil {
+				break
+			}
+			walkTemplates[d] = append(walkTemplates[d], sprite)
+		}
+		if len(walkTemplates[d]) == 0 {
+			log.Printf("Warning: no walk player sprites for direction %s", dName)
+		}
 	}
 
-	// Generate 6 color variants x 4 directions
+	// Generate 6 color variants × 4 directions × N frames
 	for colorIdx := 0; colorIdx < 6; colorIdx++ {
 		targetR := PlayerBGColors[colorIdx][0]
 		targetG := PlayerBGColors[colorIdx][1]
 		targetB := PlayerBGColors[colorIdx][2]
 
-		pantR, pantG, pantB := targetR*2/3, targetG*2/3, targetB*2/3
-
-		for dir := 0; dir < 4; dir++ {
-			if !loaded[dir] {
-				reg.players[colorIdx][dir] = FillPixelSprite(targetR, targetG, targetB)
-				continue
-			}
-
-			var swapped PixelSprite
-			for y := 0; y < PixelTileH; y++ {
-				for x := 0; x < PixelTileW; x++ {
-					px := templates[dir][y][x]
-					if px.Transparent {
-						swapped[y][x] = px
-						continue
-					}
-
-					// Shirt: template red #FF0000 -> target color
-					if px.R == 0xFF && px.G == 0x00 && px.B == 0x00 {
-						swapped[y][x] = P(targetR, targetG, targetB)
-					} else if px.R == 0xAA && px.G == 0x00 && px.B == 0x00 {
-						// Pants: template dark red #AA0000 -> darkened target
-						swapped[y][x] = P(pantR, pantG, pantB)
-					} else {
-						swapped[y][x] = px
+		for d := 0; d < 4; d++ {
+			// Idle frames
+			for _, tmpl := range idleTemplates[d] {
+				var swapped PlayerSprite
+				for y := 0; y < PlayerSpriteH; y++ {
+					for x := 0; x < PixelTileW; x++ {
+						px := tmpl[y][x]
+						if px.Transparent {
+							swapped[y][x] = px
+						} else {
+							swapped[y][x] = swapPlayerPixel(px, targetR, targetG, targetB)
+						}
 					}
 				}
+				reg.idlePlayers[colorIdx][d] = append(reg.idlePlayers[colorIdx][d], swapped)
 			}
-			reg.players[colorIdx][dir] = swapped
+
+			// Walk frames
+			for _, tmpl := range walkTemplates[d] {
+				var swapped PlayerSprite
+				for y := 0; y < PlayerSpriteH; y++ {
+					for x := 0; x < PixelTileW; x++ {
+						px := tmpl[y][x]
+						if px.Transparent {
+							swapped[y][x] = px
+						} else {
+							swapped[y][x] = swapPlayerPixel(px, targetR, targetG, targetB)
+						}
+					}
+				}
+				reg.walkPlayers[colorIdx][d] = append(reg.walkPlayers[colorIdx][d], swapped)
+			}
 		}
 	}
 
 	return nil
 }
 
-// GetPlayerSprite returns the pixel sprite for a player with given direction and color.
-func (reg *SpriteRegistry) GetPlayerSprite(dir, color int) PixelSprite {
+// GetPlayerSprite returns the player sprite for the given direction, color, animation, and frame.
+// anim: 0=idle, 1=walk. Frame wraps around the available frame count.
+func (reg *SpriteRegistry) GetPlayerSprite(dir, color, anim, frame int) PlayerSprite {
 	colorIdx := color % 6
 	dirIdx := dir % 4
-	return reg.players[colorIdx][dirIdx]
+
+	var sprites []PlayerSprite
+	if anim == 1 {
+		sprites = reg.walkPlayers[colorIdx][dirIdx]
+	} else {
+		sprites = reg.idlePlayers[colorIdx][dirIdx]
+	}
+
+	if len(sprites) == 0 {
+		// Fallback: try idle
+		sprites = reg.idlePlayers[colorIdx][dirIdx]
+	}
+	if len(sprites) == 0 {
+		var empty PlayerSprite
+		return empty
+	}
+
+	return sprites[frame%len(sprites)]
 }

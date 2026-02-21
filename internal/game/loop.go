@@ -276,13 +276,13 @@ func updatePlayerAnimation(p *Player) {
 			p.AnimFrame = 0
 			p.AnimTick = 0
 		} else if p.AnimTick >= WalkFrameInterval {
-			p.AnimFrame = (p.AnimFrame + 1) % 2
+			p.AnimFrame = (p.AnimFrame + 1) % 6
 			p.AnimTick = 0
 		}
 	} else {
 		// Idle animation
 		if p.AnimTick >= IdleFrameInterval {
-			p.AnimFrame = (p.AnimFrame + 1) % 2
+			p.AnimFrame = (p.AnimFrame + 1) % 6
 			p.AnimTick = 0
 		}
 	}

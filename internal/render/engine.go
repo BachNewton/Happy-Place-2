@@ -169,6 +169,29 @@ func (e *Engine) stampPixelSprite(px, py int, sprite PixelSprite, transparent bo
 	}
 }
 
+// stampPlayerSprite writes a 16x20 player sprite into the pixel buffer.
+// The sprite's feet align with the tile bottom; hair extends 4 pixels above.
+func (e *Engine) stampPlayerSprite(px, py int, sprite PlayerSprite) {
+	py -= PlayerSpriteH - PixelTileH // shift up so feet align with tile bottom
+	for row := 0; row < PlayerSpriteH; row++ {
+		bufY := py + row
+		if bufY < 0 || bufY >= e.pixBufH {
+			continue
+		}
+		for col := 0; col < PixelTileW; col++ {
+			bufX := px + col
+			if bufX < 0 || bufX >= e.pixBufW {
+				continue
+			}
+			p := sprite[row][col]
+			if p.Transparent {
+				continue
+			}
+			e.pixelBuf[bufY][bufX] = p
+		}
+	}
+}
+
 // collapsePixelBuf converts pixel pairs into half-block Cell values in next[][].
 // Each terminal row covers 2 pixel rows. The top pixel becomes the background color
 // and the bottom pixel becomes the foreground color of '▄' (U+2584).
@@ -331,15 +354,17 @@ func (e *Engine) Render(
 	var viewerPopup *InteractionPopup
 	for _, p := range players {
 		px, py := vp.WorldToPixel(p.X, p.Y)
-		if px+PixelTileW <= 0 || px >= e.pixBufW || py+PixelTileH <= 0 || py >= e.pixBufH {
+		// Cull: account for 4 extra pixels above tile (hair)
+		extraAbove := PlayerSpriteH - PixelTileH
+		if px+PixelTileW <= 0 || px >= e.pixBufW || py+PixelTileH <= 0 || (py-extraAbove) >= e.pixBufH {
 			continue
 		}
 		isSelf := p.ID == viewerID
 		if isSelf && p.ActiveInteraction != nil {
 			viewerPopup = p.ActiveInteraction
 		}
-		sprite := e.sprites.GetPlayerSprite(p.Dir, p.Color)
-		e.stampPixelSprite(px, py, sprite, true)
+		sprite := e.sprites.GetPlayerSprite(p.Dir, p.Color, p.Anim, p.AnimFrame)
+		e.stampPlayerSprite(px, py, sprite)
 	}
 
 	// --- Pass 3: Overlays (on top of players) ---
@@ -983,11 +1008,43 @@ func (e *Engine) renderDebugView(viewerColor, page int, tick uint64) string {
 
 	case 2: // Player sprites
 		dirNames := []string{"down", "up", "left", "right"}
-		for i, dName := range dirNames {
-			sx, sy := placeGroup(dName, CharTileW)
-			labels = append(labels, labelInfo{sy, sx, dName})
-			sprite := e.sprites.GetPlayerSprite(i, viewerColor)
-			stampAt(sx, sy+1, sprite, true)
+		animNames := []string{"idle", "walk"}
+
+		// Show idle + walk for each direction, cycling through frames
+		for a, aName := range animNames {
+			for d, dName := range dirNames {
+				label := aName + "_" + dName
+				playerSprite := e.sprites.GetPlayerSprite(d, viewerColor, a, int(tick/8))
+				// Convert PlayerSprite to PixelSprite for stampAt (top 16 rows, skip hair overhang)
+				charH := (PlayerSpriteH + 1) / 2 // char rows for 20px = 10
+				charWidth := CharTileW
+				sx, sy := placeGroup(label, charWidth)
+				labels = append(labels, labelInfo{sy, sx, label})
+
+				// Stamp PlayerSprite directly into pixel buffer
+				pxX := sx
+				pxY := (sy + 1) * 2 // char row to pixel row
+				for row := 0; row < PlayerSpriteH; row++ {
+					bufY := pxY + row
+					if bufY < 0 || bufY >= debugPixH {
+						continue
+					}
+					for col := 0; col < PixelTileW; col++ {
+						bufX := pxX + col
+						if bufX < 0 || bufX >= debugPixW {
+							continue
+						}
+						p := playerSprite[row][col]
+						if p.Transparent {
+							continue
+						}
+						e.pixelBuf[bufY][bufX] = p
+					}
+				}
+
+				// Adjust curY to account for taller player sprite
+				_ = charH
+			}
 		}
 	}
 

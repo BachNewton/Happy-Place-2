@@ -21,6 +21,13 @@ type Pixel struct {
 // PixelSprite is a PixelTileH x PixelTileW grid of pixels.
 type PixelSprite [PixelTileH][PixelTileW]Pixel
 
+// PlayerSpriteH is the height of a player sprite in pixels (16 body + 4 hair above).
+const PlayerSpriteH = 20
+
+// PlayerSprite is a 20x16 pixel grid for player characters.
+// 4 pixels taller than a tile sprite to accommodate hair above the tile boundary.
+type PlayerSprite [PlayerSpriteH][PixelTileW]Pixel
+
 // PixelOverlay is a pixel sprite rendered at a vertical offset above its owning tile.
 type PixelOverlay struct {
 	Sprite PixelSprite

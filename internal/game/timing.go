@@ -15,8 +15,8 @@ func SecsToTicks(s float64) int {
 var (
 	MoveRepeatDelay   = SecsToTicks(0.15) // min ticks between moves when holding a key
 	WalkAnimDuration  = SecsToTicks(0.4)  // how long walk animation plays after a move
-	WalkFrameInterval = SecsToTicks(0.2)  // ticks between walk animation frames
-	IdleFrameInterval = SecsToTicks(1.0)  // ticks between idle animation frames
+	WalkFrameInterval = SecsToTicks(0.1)  // ticks between walk animation frames (6 frames, 0.6s full cycle)
+	IdleFrameInterval = SecsToTicks(0.15) // ticks between idle animation frames (6 frames, 0.9s full cycle)
 	WaterAnimInterval = SecsToTicks(0.4)  // ticks between water animation frames
 	GrassAnimInterval = SecsToTicks(2.0)  // ticks between grass wind sway frames
 
